@@ -1,0 +1,3 @@
+#!/bin/sh
+# Refuse to push anything that looks like a secret or contains a value from .env.
+exec python scripts/secret_scan.py --history main
