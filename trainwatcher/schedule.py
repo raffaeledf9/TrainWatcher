@@ -28,13 +28,14 @@ def units(watch):
     Same-day round trips are one round-trip unit per operator; other legs are one unit per day."""
     out = []
     for op in watch.operators:
+        pax = watch.passenger if op == "I" else "adult"  # Trenitalia shows young/senior fares in the adult search
         if watch.same_day:
             d = watch.legs[0].dates()[0]
-            out.append((op, watch.legs[0].origin, watch.legs[0].destination, d, watch.passenger, d))
+            out.append((op, watch.legs[0].origin, watch.legs[0].destination, d, pax, d))
             continue
         for leg in watch.legs:
             for d in leg.dates():
-                out.append((op, leg.origin, leg.destination, d, watch.passenger, None))
+                out.append((op, leg.origin, leg.destination, d, pax, None))
     return out
 
 

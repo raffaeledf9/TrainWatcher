@@ -1,0 +1,1 @@
+matplotlib==3.11.2  # charts only; the rest of the job is stdlib
