@@ -1,0 +1,51 @@
+name: run
+# One TrainWatcher run: drain the Worker's queue, check due prices, save encrypted state.
+# Started by the Cloudflare Worker (workflow_dispatch); the hourly schedule is only a fallback (ADR 0001).
+on:
+  workflow_dispatch:
+    inputs:
+      reason: { description: "why the run was started", required: false, default: "manual" }
+  schedule:
+    - cron: "17 * * * *"
+
+concurrency:
+  group: trainwatcher-run
+  cancel-in-progress: false
+
+permissions:
+  contents: write   # push the encrypted state branch
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      STATE_KEY: ${{ secrets.STATE_KEY }}
+      TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+      OWNER_CHAT_ID: ${{ secrets.OWNER_CHAT_ID }}
+      WORKER_SECRET: ${{ secrets.WORKER_SECRET }}
+      WORKER_URL: ${{ vars.WORKER_URL }}
+      STATE_DB: state.db
+    steps:
+      - uses: actions/checkout@v5
+      - name: Restore state
+        id: restore
+        run: |
+          if git fetch -q --depth=1 origin state 2>/dev/null; then
+            git show FETCH_HEAD:state.db.enc > state.db.enc
+            openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -pass env:STATE_KEY -in state.db.enc -out state.db
+            echo "state restored"
+          else
+            echo "no state yet"
+          fi
+      - name: Run
+        run: python3 -m trainwatcher.run
+      - name: Save state
+        # never overwrite good state after a failed restore; do save after a failed run (partial work is real)
+        if: always() && steps.restore.outcome == 'success' && hashFiles('state.db') != ''
+        run: |
+          openssl enc -aes-256-cbc -pbkdf2 -iter 200000 -salt -pass env:STATE_KEY -in state.db -out /tmp/state.db.enc
+          cd "$(mktemp -d)" && cp /tmp/state.db.enc . && git init -q -b state && git add state.db.enc
+          git -c user.name=trainwatcher -c user.email=trainwatcher@users.noreply.github.com commit -qm "state"
+          git push -q -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" state
+          echo "state saved"
