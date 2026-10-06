@@ -1,0 +1,243 @@
+"""Messages and buttons exactly as approved in the message prototype (branch prototype/bot-messages):
+status view = style A, alerts = style C layout + A details, /list = one info-rich button per watch.
+Every function returns (html_text, inline_keyboard_rows)."""
+from datetime import date
+from html import escape
+
+from trainwatcher import stations
+from trainwatcher.i18n import EN, day, month, price, t
+from trainwatcher.offers import ITALO
+
+OPS = {"FR": "Frecciarossa", "FA": "Frecciargento", "FB": "Frecciabianca", "IT": "Italo"}
+TRENITALIA_URL = "https://www.lefrecce.it/Channels.Website.WEB/#/?tab=biglietto"
+
+
+# ---------- small pieces ----------
+def station_name(key, lang):
+    n = stations.by_key(key)["n"]
+    return n.replace("(tutte le stazioni)", "(tutte)" if lang != EN else "(all)")
+
+
+def abbr(key):
+    return stations.abbreviation(stations.by_key(key))
+
+
+def route(watch, lang, short=False):
+    a, b = watch.legs[0].origin, watch.legs[0].destination
+    arrow = " ⇄ " if watch.round_trip else " → "
+    return (abbr(a) + arrow + abbr(b)) if short else escape(station_name(a, lang) + arrow + station_name(b, lang))
+
+
+def days_label(leg, lang, today=None):
+    today = today or date.today()
+    ds = leg.dates()
+    yr = lambda d: d.year != today.year
+    if len(leg.days) == 1 and len(leg.days[0]) == 7:
+        return month(ds[0].year, ds[0].month, lang)
+    if len(ds) == 1:
+        return day(ds[0], lang, year=yr(ds[0]))
+    a, b = ds[0], ds[-1]
+    if (a.year, a.month) == (b.year, b.month):
+        return f"{a.day}–{day(b, lang, weekday=False, year=yr(b))}"
+    return f"{day(a, lang, weekday=False)} – {day(b, lang, weekday=False, year=yr(b))}"
+
+
+def watch_days(watch, lang, today=None):
+    out = days_label(watch.legs[0], lang, today)
+    return out + (" → " + days_label(watch.legs[1], lang, today) if watch.round_trip and watch.legs[1].days != watch.legs[0].days else "")
+
+
+def fare_label(watch, lang):
+    return ", ".join(f.split(":", 1)[1] for f in watch.fares) if watch.fares else t(lang, "cheapest")
+
+
+def short_train(o):
+    return ("IT " if o.operator == ITALO else o.category + " ") + o.train
+
+
+def train_line(o, lang, with_day):
+    d = (day(date.fromisoformat(o.dep[:10]), lang) + " ") if with_day else ""
+    seats = f" · {o.seats} {t(lang, 'left')}" if o.seats else ""
+    return f"• {d}{o.dep[11:16]}→{o.arr[11:16]} <b>{OPS.get(o.category, o.category)} {o.train}</b> · {o.cls} · {escape(o.fare)}{seats}"
+
+
+def italo_url(leg, d, passenger):
+    a, b = stations.by_key(leg.origin).get("i"), stations.by_key(leg.destination).get("i")
+    if not (a and b):
+        return None
+    n = {"adult": "adt=1&yng=0&snr=0", "young": "adt=0&yng=1&snr=0", "senior": "adt=0&yng=0&snr=1"}[passenger]
+    return (f"https://biglietti.italotreno.com/it/booking/ricerca-treni?osc={a}&dsc={b}&jt=single&od={d:%d}%2F{d:%m}%2F{d:%Y}"
+            f"&id=&{n}&chd=0&inf=0&pet=0&promo=&lang=it&startSearch=true")
+
+
+def book_rows(watch, lang, d=None):
+    leg = watch.legs[0]
+    row = []
+    if "I" in watch.operators and (u := italo_url(leg, d or leg.dates()[0], watch.passenger)):
+        row.append({"text": t(lang, "book_i"), "url": u})
+    if "T" in watch.operators:
+        row.append({"text": t(lang, "book_t"), "url": TRENITALIA_URL})
+    return [row] if row else []
+
+
+def book_train(o, watch):
+    leg = watch.legs[0] if o.dep[:10] in [str(x) for x in watch.legs[0].dates()] else watch.legs[-1]
+    u = italo_url(leg, date.fromisoformat(o.dep[:10]), watch.passenger) if o.operator == ITALO else TRENITALIA_URL
+    return {"text": f"🎫 {o.dep[11:16]} {short_train(o)}", "url": u or TRENITALIA_URL}
+
+
+def actions(watch, lang):
+    return [[{"text": t(lang, "hist"), "callback_data": f"hi:{watch.id}"}, {"text": t(lang, "now"), "callback_data": f"nw:{watch.id}"},
+             {"text": t(lang, "dele"), "callback_data": f"de:{watch.id}"}]]
+
+
+def last_check(at, lang):
+    return f"🔄 {t(lang, 'last_check')} {at:%H:%M}"
+
+
+# ---------- status view (style A) ----------
+def _leg_block(view, leg, lang):
+    lines = []
+    multi = len(leg.dates()) > 1
+    if view["low"] is None:
+        lines.append(t(lang, "none_found"))
+        if view.get("other_fare"):
+            o = view["other_fare"]
+            lines.append(f"ℹ️ {t(lang, 'other_fare')}: {price(o.price, lang)} {escape(o.fare)}")
+        return lines
+    lines.append(f"<b>{price(view['low'], lang)}</b> {t(lang, 'lowest')} · {len(view['ties'])} {t(lang, 'trains')}")
+    lines += [train_line(o, lang, multi) for o in view["ties"]]
+    if view["others"]:
+        lines += ["", f"<i>{t(lang, 'next_')}</i>"]
+        lines += [f"• {price(o.price, lang)} {(day(date.fromisoformat(o.dep[:10]), lang) + ' ') if multi else ''}{o.dep[11:16]} {short_train(o)} · {escape(o.fare)}"
+                  for o in view["others"]]
+    return lines
+
+
+def status(watch, views, checked_at, lang, today=None, search=False, total=None, stale_since=None, search_id=None):
+    """views: one dict per leg {low, ties, others, other_fare}; total: round-trip total or None."""
+    pax = t(lang, watch.passenger)
+    if search:
+        head = [f"🔎 <b>{t(lang, 'search')}</b> · {route(watch, lang, short=True)} · {watch_days(watch, lang, today)} · 👤 {pax} · 💶 {escape(fare_label(watch, lang))}"]
+    else:
+        head = [f"🚄 <b>{route(watch, lang)}</b>", f"📅 {watch_days(watch, lang, today)} · 👤 {pax} · 💶 {escape(fare_label(watch, lang))}"]
+    body = []
+    for i, (view, leg) in enumerate(zip(views, watch.legs)):
+        if watch.round_trip:
+            body += ["", f"{'→' if i == 0 else '←'} <b>{t(lang, 'out' if i == 0 else 'ret')}</b> · {days_label(leg, lang, today)}"]
+        else:
+            body.append("")
+        body += _leg_block(view, leg, lang)
+    if total is not None:
+        body += ["", f"{t(lang, 'total')} <b>{price(total, lang)}</b>"]
+    low = total if watch.round_trip else views[0]["low"]
+    tail = [""]
+    if not search and watch.max_price is not None and low is not None and low > watch.max_price:
+        tail.append(f"⚠️ {t(lang, 'above')} <b>{price(watch.max_price, lang)}</b>")
+    if stale_since:
+        tail.append(t(lang, "stale", t=f"{stale_since:%H:%M}"))
+    tail.append(f"🔄 {t(lang, 'live')}" if search else last_check(checked_at, lang))
+    kb = book_rows(watch, lang)
+    kb += [[{"text": t(lang, "watch_this"), "callback_data": f"wt:{search_id}"}]] if search else actions(watch, lang)
+    return "\n".join(head + body + tail), kb
+
+
+# ---------- alerts (C layout + A details) ----------
+TITLES = {"drop": ("📉", "down"), "rise": ("📈", "up"), "under_max": ("✅", "under"), "back": ("🔁", "back"),
+          "last_day": ("⏰", "last"), "still_on_sale": ("🍀", "still")}
+
+
+def alert(watch, events, views, checked_at, lang, today=None):
+    """One message for all events of one Watch in one Run (baseline events are sent as the status view)."""
+    sections, trains = [], []
+    ties = [o for v in views for o in v.get("ties", [])]
+    for e in events:
+        if e["kind"] == "gone":
+            sections.append([f"🚫 <b>{escape(fare_label(watch, lang))} {t(lang, 'gone')}</b>", f"{route(watch, lang)} · {watch_days(watch, lang, today)}", "",
+                             t(lang, "gone_window" if e["reason"] == "window" else "gone_sold")])
+            continue
+        if watch.round_trip and e["kind"] in ("drop", "rise"):
+            sections.append(_round_trip_alert(watch, e, views, lang, today))
+            trains += [v["ties"][0] for v in views if v.get("ties")]
+            continue
+        icon, key = TITLES[e["kind"]]
+        lines = [f"{icon} <b>{t(lang, key)}</b> · {escape(fare_label(watch, lang))}", f"{route(watch, lang)} · {watch_days(watch, lang, today)}", ""]
+        multi = any(len(l.dates()) > 1 for l in watch.legs)
+        for o in ties:
+            old = f" <s>{price(e['prev'], lang)}</s>" if e["kind"] in ("drop", "rise") and e.get("prev") is not None else ""
+            d = (day(date.fromisoformat(o.dep[:10]), lang) + " ") if multi else ""
+            lines.append(f"<b>{price(o.price, lang)}</b>{old} — {OPS.get(o.category, o.category)} {o.train} {d}{o.dep[11:16]}→{o.arr[11:16]} · {o.cls}")
+        lines.append("")
+        lines += _notes(watch, e, lang)
+        sections.append(lines)
+        trains += ties
+    seen, row = set(), []
+    for o in trains:
+        if (o.train, o.dep) not in seen:
+            seen.add((o.train, o.dep))
+            row.append(book_train(o, watch))
+    kb = [row[i:i + 3] for i in range(0, min(len(row), 6), 3)] + actions(watch, lang)
+    return "\n\n".join("\n".join(s).strip() for s in sections), kb
+
+
+def _notes(watch, e, lang):
+    out = []
+    if e["kind"] == "still_on_sale":
+        return [f"🛒 {t(lang, 'still_note')}"]
+    if e["kind"] == "last_day":
+        return [f"🛒 {t(lang, 'tonight')}"]
+    if "max" in e:
+        m = price(e["max"], lang)
+        if e["under_max"]:
+            out.append(f"✅ {t(lang, 'under_max', m=m)}")
+        else:
+            out.append(f"⚠️ {t(lang, 'buy_soon' if e['kind'] == 'rise' else 'above_max', m=m)}")
+    from trainwatcher.alerts import window_days
+    w = window_days(watch)
+    if w is not None:
+        from datetime import timedelta
+        out.append(f"🛒 {t(lang, 'window', d=day(watch.first_day - timedelta(days=w), lang))}")
+    return out
+
+
+def _round_trip_alert(watch, e, views, lang, today):
+    up = e["kind"] == "rise"
+    lines = [f"{'📈' if up else '📉'} <b>{t(lang, 'rt_up' if up else 'rt')}</b> · {escape(fare_label(watch, lang))}",
+             f"{route(watch, lang)} · {watch_days(watch, lang, today)}", "",
+             f"{t(lang, 'total')} <b>{price(e['low'], lang)}</b>" + (f" <s>{price(e['prev'], lang)}</s>" if e.get("prev") is not None else "")]
+    legs, prev = e.get("legs") or {}, e.get("prev_legs") or {}
+    for i, k in enumerate(("out", "ret")):
+        o = views[i]["ties"][0] if views[i].get("ties") else None
+        if o is None:
+            continue
+        changed = prev.get(k) is not None and legs.get(k) != prev.get(k)
+        label = t(lang, ("out_ch" if i == 0 else "ret_ch") if changed else ("out" if i == 0 else "ret"))
+        old = f" <s>{price(prev[k], lang)}</s>" if changed else ""
+        same = "" if changed else f" ({t(lang, 'unchanged')})"
+        lines.append(f"{'→' if i == 0 else '←'} {label}: <b>{price(o.price, lang)}</b>{old} — {OPS.get(o.category, o.category)} {o.train} {o.dep[11:16]}→{o.arr[11:16]}{same}")
+    lines.append("")
+    if "max" in e:
+        m = price(e["max"], lang)
+        lines.append(f"✅ {t(lang, 'under_max', m=m)}" if e["under_max"] else f"⚠️ {t(lang, 'above_max', m=m)}")
+    return lines
+
+
+# ---------- /list (L2 v2) and small replies ----------
+def watch_list(items, lang, today=None):
+    """items: [(watch, lowest_offer_or_None, lowest_price_or_None, checked_at_or_None)] in display order."""
+    if not items:
+        return t(lang, "list_empty"), []
+    nums = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
+    recap, kb = [], []
+    for i, (w, o, low, at) in enumerate(items):
+        n = nums[i] if i < len(nums) else f"{i + 1}."
+        recap.append(f"{n} {route(w, lang, short=True)} · {watch_days(w, lang, today)}" + (f" · {last_check(at, lang)}" if at else ""))
+        fare = f" · {o.fare} {price(low, lang)}" if o is not None else (f" · {price(low, lang)}" if low is not None else "")
+        kb.append([{"text": f"{n} {station_name(w.legs[0].origin, lang)}{' ⇄ ' if w.round_trip else ' → '}{station_name(w.legs[0].destination, lang)} · {watch_days(w, lang, today)}{fare}",
+                    "callback_data": f"st:{w.id}"}])
+    return f"📋 <b>{t(lang, 'list_t')}</b>\n\n" + "\n".join(recap), kb
+
+
+def delete_question(n, watch, lang):
+    return t(lang, "del_q", n=n, w=route(watch, lang, short=True) + " · " + watch_days(watch, lang)), \
+        [[{"text": t(lang, "del_yes"), "callback_data": f"dy:{watch.id}"}, {"text": t(lang, "del_no"), "callback_data": f"dn:{watch.id}"}]]
