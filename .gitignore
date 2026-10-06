@@ -1,0 +1,10 @@
+.env
+*.db
+*.db.enc
+__pycache__/
+.wrangler/
+node_modules/
+.scratch/
+*.sqlite
+state.db*
+.dev.vars
