@@ -28,6 +28,9 @@ jobs:
       STATE_DB: state.db
     steps:
       - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12", cache: pip }
+      - run: pip install -q -r requirements.txt
       - name: Restore state
         id: restore
         run: |
@@ -39,7 +42,7 @@ jobs:
             echo "no state yet"
           fi
       - name: Run
-        run: python3 -m trainwatcher.run
+        run: python -m trainwatcher.run
       - name: Save state
         # never overwrite good state after a failed restore; do save after a failed run (partial work is real)
         if: always() && steps.restore.outcome == 'success' && hashFiles('state.db') != ''

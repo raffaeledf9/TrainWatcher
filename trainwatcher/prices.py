@@ -27,7 +27,7 @@ def matches(offer, watch, leg):
     op = "T" if offer.operator == TRENITALIA else "I"
     if op not in watch.operators or not leg.accepts(offer.dep):
         return False
-    if watch.classes and offer.cls not in watch.classes:
+    if watch.classes and not any(offer.cls == c or offer.cls.startswith(c + " ") for c in watch.classes):
         return False
     fid = fare_id(offer)
     if offer.same_day_ar and not watch.same_day:
