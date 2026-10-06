@@ -2,7 +2,8 @@
 
 Scans every tracked file at HEAD and, with --history, every blob in every commit reachable from
 the given refs (default: main). Fails on token-shaped strings and, when a local .env exists, on
-any of its actual values. Prints only file:line and the rule name, never the matched text.
+any of its actual values; with --history also on commit emails that aren't GitHub noreply addresses.
+Prints only file:line (or the commit hash) and the rule name, never the matched text.
 
     python scripts/secret_scan.py            # tracked files
     python scripts/secret_scan.py --history  # whole history of main
@@ -61,6 +62,10 @@ def main(argv):
             if git("cat-file", "-t", parts[0]).strip() != b"blob":
                 continue
             scan_text(parts[1], git("cat-file", "-p", parts[0]).decode("utf-8", "replace"), secrets, hits)
+        for line in git("log", "--format=%h %ae %ce", *refs).decode().splitlines():
+            h, *emails = line.split()
+            if any(not e.endswith("@users.noreply.github.com") for e in emails):
+                hits.append(f"commit {h}: personal email (use the noreply address)")
     else:
         for name in git("ls-files").decode().splitlines():
             p = Path(name)
