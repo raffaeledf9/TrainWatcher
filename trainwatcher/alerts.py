@@ -1,0 +1,87 @@
+"""Alert rules (map decision "Watch and alert semantics" + Owner rules from the message prototype).
+
+evaluate() compares one Check's outcome with the Watch's alert state and returns the Alert events to send
+(rendered together as one message per Watch) plus the new state. The watch-level number is the Lowest
+price: the minimum Best price over all its days (multi-day), or the total (round trip).
+"""
+from datetime import datetime, time
+
+# Purchase windows: days before departure after which a fare can no longer be bought.
+WINDOW_DAYS = {"T:FrecciaYOUNG": 11, "T:FrecciaSENIOR": 11, "I:Italo Giovani": 11, "I:Italo Senior": 11, "TI:A/R same day": 3}
+NIGHT = (time(23, 0), time(7, 0))  # silent notifications in Europe/Rome local time
+
+
+def window_days(watch):
+    """Shortest purchase window among the tracked fares (Fare watches only), else None."""
+    days = [WINDOW_DAYS[f] for f in (watch.fares or []) if f in WINDOW_DAYS]
+    return min(days) if days else None
+
+
+def evaluate(watch, state, lowest, live_ok, today, legs=None):
+    """watch: Watch; state: dict from the last Check ({} on the first); lowest: float|None (None = no matching
+    offer); live_ok: True if every search unit of this Check succeeded (needed to claim "gone");
+    legs: optional {"out": price, "ret": price} for round trips. Returns (events, new_state)."""
+    s = dict(state)
+    prev, events = s.get("low"), []
+    mx = watch.max_price
+    days_left = (watch.first_day - today).days
+    wdays = window_days(watch)
+    window_closed = wdays is not None and days_left < wdays
+
+    def ev(kind, **data):
+        e = {"kind": kind, "low": lowest, "prev": prev, "legs": legs, "prev_legs": s.get("legs")}
+        if mx is not None and lowest is not None:
+            e["max"], e["under_max"] = mx, lowest <= mx
+        e.update(data)
+        events.append(e)
+
+    if "low" not in s:                                   # first Check: the status view is the baseline
+        ev("baseline")
+        s["alerted_low"] = lowest
+        s["armed"] = not (mx is not None and lowest is not None and lowest <= mx)
+    elif lowest is None:
+        if prev is not None and live_ok:                 # gone only after a live Check confirmed it everywhere
+            ev("gone", reason="window" if window_closed else "sold_out")
+        # a failed Check proves nothing: keep the previous state and stay silent
+    elif prev is None:
+        ev("back")
+        s["alerted_low"] = lowest
+    elif watch.kind == "fare":
+        if lowest != prev:                               # every change, any amount; max only marks it
+            ev("rise" if lowest > prev else "drop")
+    else:                                                # Cheapest watch
+        alerted = s.get("alerted_low")
+        if watch.rises:                                  # switched on: every change, drops still gated by max
+            if lowest > prev:
+                ev("rise")
+            elif lowest < prev and (mx is None or lowest <= mx):
+                ev("drop")
+        elif (alerted is None or lowest < alerted) and (mx is None or lowest <= mx):
+            ev("drop")                                   # only below the lowest already alerted
+        if any(e["kind"] == "drop" for e in events):
+            s["alerted_low"] = lowest if alerted is None else min(alerted, lowest)
+        if mx is not None:
+            if lowest <= mx and s.get("armed", True):
+                if not any(e["kind"] == "drop" for e in events):
+                    ev("under_max")
+                s["armed"] = False
+            elif lowest > mx:
+                s["armed"] = True                        # re-arm once the price goes back above max
+
+    if lowest is not None and wdays is not None:
+        if window_closed and not s.get("still_sent"):
+            ev("still_on_sale")
+            s["still_sent"] = True
+        if days_left == wdays and s.get("last_day_sent") != str(today):
+            ev("last_day")
+            s["last_day_sent"] = str(today)
+
+    if lowest is not None or live_ok:
+        s["low"] = lowest
+        s["legs"] = legs
+    return events, s
+
+
+def silent(now_local: datetime):
+    t = now_local.time()
+    return t >= NIGHT[0] or t < NIGHT[1]
