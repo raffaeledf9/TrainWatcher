@@ -6,13 +6,15 @@ const MIN = 60_000;
 // Fallback strings until the job has published strings:<lang> to D1 (the job's i18n.py is the source of truth).
 const FALLBACK = { ack: "⏳ Got it — checking prices, results in about a minute.", list_empty: "No watches yet.", past_empty: "No past watches yet.",
   welcome: "Welcome to TrainWatcher 👋", lang_q: "Choose your language:", help: "/list · /past · /language", deleted: "🗑 Watch {n} deleted.",
-  kept: "↩️ Watch {n} kept.", del_yes: "✅ Delete", del_no: "↩️ Keep", lang_set: "OK" };
+  kept: "↩️ Watch {n} kept.", del_yes: "✅ Delete", del_no: "↩️ Keep", lang_set: "OK",
+  job_dead: "⚠️ No price check has finished for over 30 minutes.", recovered: "✅ Price checks are working again." };
 
 export default {
   async fetch(req, env, ctx) {
     const url = new URL(req.url);
     try {
       if (req.method === "POST" && url.pathname === "/tg") return await telegram(req, env, ctx);
+      if (req.method === "POST" && url.pathname === "/form") return await form(req, env, ctx);
       if (url.pathname.startsWith("/job/")) return await jobApi(req, env, url.pathname);
       return new Response("TrainWatcher", { status: 200 });
     } catch (e) {
@@ -27,6 +29,7 @@ export default {
     const pending = await env.DB.prepare("SELECT COUNT(*) AS n FROM queue WHERE taken_at IS NULL").first("n");
     if (minute % 5 === 0) await dispatch(env, "tick");
     else if (pending > 0) await dispatch(env, "queue");
+    await watchJob(env);
   },
 };
 
@@ -37,7 +40,7 @@ async function telegram(req, env, ctx) {
   const msg = u.message, cb = u.callback_query;
   const from = (msg && msg.from) || (cb && cb.from);
   if (!from || String(from.id) !== String(env.OWNER_CHAT_ID)) return new Response("ok"); // owner lock (v1)
-  const uid = from.id;
+  const uid = from.id, origin = new URL(req.url).origin;
   const lang = (await snap(env, `${uid}:lang`)) || (from.language_code === "it" ? "it" : "en");
   const S = { ...FALLBACK, ...((await snap(env, `strings:${lang}`)) || {}) };
 
@@ -45,6 +48,7 @@ async function telegram(req, env, ctx) {
     const chat = msg.chat.id, cmd = msg.text.trim().split(/\s+/)[0].toLowerCase().replace(/@.*$/, "");
     if (cmd === "/start") {
       if (!(await snap(env, `${uid}:lang`))) return langPrompt(chat, S, from.language_code);
+      ctx.waitUntil(menu(env, origin, chat, lang));
       return send(chat, S.welcome);
     }
     if (cmd === "/language") return langPrompt(chat, S, lang);
@@ -74,6 +78,7 @@ async function telegram(req, env, ctx) {
     if (act === "lang" && (arg === "en" || arg === "it")) {
       await putSnap(env, `${uid}:lang`, uid, arg);
       await enqueue(env, uid, "lang", { lang: arg });
+      ctx.waitUntil(menu(env, origin, chat, arg));
       const S2 = { ...FALLBACK, ...((await snap(env, `strings:${arg}`)) || {}) };
       return Response.json({ method: "editMessageText", chat_id: chat, message_id: mid, text: S2.lang_set + "\n\n" + S2.welcome });
     }
@@ -83,6 +88,42 @@ async function telegram(req, env, ctx) {
     return send(chat, S.ack);
   }
   return new Response("ok");
+}
+
+// The menu button opens the Mini App form (served from this Worker's assets) in the user's language.
+function menu(env, origin, chat_id, lang) {
+  return tg(env, "setChatMenuButton", { chat_id, menu_button: { type: "web_app", text: "🚄 TrainWatcher", web_app: { url: `${origin}/?lang=${lang}` } } });
+}
+
+// ---------- Mini App form ----------
+// A menu-button Mini App can't use sendData, so the form POSTs here (text/plain, same origin); Telegram's signed
+// initData proves who sent it. The job validates the form itself (model.from_payload).
+async function form(req, env, ctx) {
+  const body = await req.text();
+  if (body.length > 16_000) return Response.json({ ok: false, error: "too large" }, { status: 413 });
+  let p;
+  try { p = JSON.parse(body); } catch { return Response.json({ ok: false, error: "bad request" }, { status: 400 }); }
+  const user = await verifyInitData(String(p.initData || ""), env.TELEGRAM_TOKEN);
+  if (!user || String(user.id) !== String(env.OWNER_CHAT_ID)) return Response.json({ ok: false, error: "not allowed" }, { status: 403 });
+  if (!["watch", "search"].includes(p.mode) || !p.data || typeof p.data !== "object") return Response.json({ ok: false, error: "bad request" }, { status: 400 });
+  await enqueue(env, user.id, "form", { mode: p.mode, data: p.data });
+  const lang = (await snap(env, `${user.id}:lang`)) || "en";
+  const S = { ...FALLBACK, ...((await snap(env, `strings:${lang}`)) || {}) };
+  ctx.waitUntil(Promise.all([dispatch(env, "form"), tg(env, "sendMessage", { chat_id: user.id, text: S.ack })]));
+  return Response.json({ ok: true });
+}
+
+// https://core.telegram.org/bots/webapps#validating-data-received-via-the-mini-app
+async function verifyInitData(initData, token, maxAgeS = 86400) {
+  const q = new URLSearchParams(initData), hash = q.get("hash") || "";
+  q.delete("hash");
+  const check = [...q.entries()].sort(([a], [b]) => (a < b ? -1 : 1)).map(([k, v]) => `${k}=${v}`).join("\n");
+  const enc = new TextEncoder();
+  const hmac = async (key, msg) => new Uint8Array(await crypto.subtle.sign("HMAC",
+    await crypto.subtle.importKey("raw", key, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]), enc.encode(msg)));
+  const mine = [...(await hmac(await hmac(enc.encode("WebAppData"), token), check))].map((b) => b.toString(16).padStart(2, "0")).join("");
+  if (!hash || !safeEqual(mine, hash) || Date.now() / 1000 - Number(q.get("auth_date")) > maxAgeS) return null;
+  try { return JSON.parse(q.get("user")); } catch { return null; }
 }
 
 function send(chat_id, text, kb) {
@@ -167,6 +208,21 @@ async function jobApi(req, env, path) {
     return Response.json({ ok: true });
   }
   return new Response("not found", { status: 404 });
+}
+
+// Dead-man switch (map ticket 13): tell the Owner when no run has finished for 30 minutes, and when runs are back.
+// The job watches this Worker in turn (run.py health).
+async function watchJob(env) {
+  const { results } = await env.DB.prepare("SELECT k, v FROM meta WHERE k IN ('last_run_ok', 'job_dead')").all();
+  const m = Object.fromEntries(results.map((r) => [r.k, r.v]));
+  if (!m.last_run_ok) return;
+  const dead = Date.now() - Number(m.last_run_ok) > 30 * MIN;
+  if (dead === (m.job_dead === "1")) return;
+  const uid = env.OWNER_CHAT_ID, lang = (await snap(env, `${uid}:lang`)) || "en";
+  const S = { ...FALLBACK, ...((await snap(env, `strings:${lang}`)) || {}) };
+  const h = Number(new Intl.DateTimeFormat("en", { hour: "numeric", hourCycle: "h23", timeZone: "Europe/Rome" }).format(new Date()));
+  if (await tg(env, "sendMessage", { chat_id: uid, text: dead ? S.job_dead : S.recovered, disable_notification: h >= 23 || h < 7 }))
+    await env.DB.prepare("INSERT INTO meta (k, v) VALUES ('job_dead', ?1) ON CONFLICT(k) DO UPDATE SET v = ?1").bind(dead ? "1" : "").run();
 }
 
 // ---------- GitHub dispatch ----------
