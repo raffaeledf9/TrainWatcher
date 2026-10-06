@@ -1,0 +1,442 @@
+<!doctype html>
+<!-- TrainWatcher Mini App: the Search / New-watch form (approved prototype: variant D + Search/Watch switch).
+     URL: index.html?lang=en|it&mode=search|watch. The payload contract is trainwatcher.model.from_payload. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>TrainWatcher</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+  :root { --bg0: #ffffff; --fg0: #1b1f24; --hint0: #6b7280; --accent0: #2481cc; --accent-fg0: #ffffff; --card0: #f2f4f7; --err0: #d93025; color-scheme: light; }
+  :root[data-scheme="dark"] { --bg0: #17212b; --fg0: #e8eaed; --hint0: #8b98a5; --accent0: #5288c1; --card0: #232e3c; --err0: #ff6b6b; color-scheme: dark; }
+  :root {
+    --bg: var(--tg-theme-bg-color, var(--bg0)); --fg: var(--tg-theme-text-color, var(--fg0)); --hint: var(--tg-theme-hint-color, var(--hint0));
+    --accent: var(--tg-theme-button-color, var(--accent0)); --accent-fg: var(--tg-theme-button-text-color, var(--accent-fg0));
+    --card: var(--tg-theme-secondary-bg-color, var(--card0)); --err: var(--tg-theme-destructive-text-color, var(--err0)); --line: rgba(127, 127, 127, .25);
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  #app { max-width: 480px; margin: 0 auto; padding: 12px 16px 24px; }
+  button, input, select { font: inherit; color: var(--fg); }
+  button { cursor: pointer; } button:disabled { cursor: default; }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  input, select, .tog { width: 100%; min-height: 40px; padding: 7px 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--card); }
+  input[type="checkbox"] { width: 20px; height: 20px; min-height: 0; margin: 0; accent-color: var(--accent); }
+  .tog { text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .seg { display: flex; gap: 3px; padding: 3px; background: var(--card); border-radius: 10px; }
+  .seg button { flex: 1; min-height: 36px; border: 0; border-radius: 8px; background: transparent; font-size: 13px; }
+  .seg button[aria-pressed="true"] { background: var(--accent); color: var(--accent-fg); }
+  .route { display: flex; gap: 6px; align-items: flex-start; margin: 8px 0 6px; } .route > div { flex: 1; min-width: 0; }
+  .swap { flex: 0 0 32px; height: 32px; margin-top: 4px; position: relative; border: 1px solid var(--line); border-radius: 50%; background: var(--card); font-size: 15px; }
+  .swap::after, .clr::after { content: ""; position: absolute; inset: -6px; }
+  .ac { position: relative; } .ac input { padding-right: 28px; }
+  .clr { position: absolute; right: 7px; top: 50%; transform: translateY(-50%); width: 16px; height: 16px; padding: 0; border: 0; border-radius: 50%;
+         background: var(--hint); color: var(--bg); font-size: 9px; line-height: 16px; text-align: center; }
+  .clr::after { inset: -10px; }
+  .ac input:placeholder-shown + .clr { display: none; }
+  .list { position: absolute; z-index: 5; left: 0; right: 0; margin: 2px 0 0; padding: 4px; list-style: none; background: var(--bg); border: 1px solid var(--line);
+          border-radius: 10px; max-height: 260px; overflow: auto; box-shadow: 0 6px 20px rgba(0, 0, 0, .15); }
+  .list li { padding: 10px 8px; border-radius: 8px; cursor: pointer; } .list li:hover, .list li[aria-selected="true"] { background: var(--card); }
+  .list small { color: var(--hint); margin-left: 6px; }
+  .g { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin: 6px 0; } .g > * { min-width: 0; } .span { grid-column: 1 / -1; }
+  .sec { border-top: 1px solid var(--line); margin-top: 8px; padding-top: 6px; }
+  .card { background: var(--card); border-radius: 12px; padding: 10px 12px; margin: 8px 0; } .g > .card { margin: 0; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip { min-height: 36px; padding: 6px 12px; border: 1px solid var(--line); border-radius: 999px; background: var(--bg); font-size: 13px; }
+  .chip[aria-pressed="true"] { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
+  .chip:disabled { opacity: .45; } .chip small { opacity: .7; }
+  .cal { background: var(--card); border-radius: 12px; padding: 8px; }
+  .calh { display: flex; justify-content: space-between; align-items: center; margin: 6px 0 2px; }
+  .calh button { width: 44px; height: 36px; border: 0; background: transparent; font-size: 20px; } .calh button:disabled { opacity: .25; }
+  .calg { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; text-align: center; } .calg.mons { grid-template-columns: repeat(4, 1fr); gap: 6px; margin-top: 8px; }
+  .wd { font-size: 11px; color: var(--hint); padding: 2px 0; }
+  .day { height: 36px; border: 0; border-radius: 8px; background: transparent; font-size: 13px; } .mons .day { height: 40px; background: var(--bg); }
+  .day:disabled { opacity: .3; }
+  .day.in { background: var(--line); background: color-mix(in srgb, var(--accent) 28%, transparent); }
+  .day[aria-pressed="true"] { background: var(--accent); color: var(--accent-fg); }
+  .hint { font-size: 12px; color: var(--hint); margin: 4px 0; } .hint.c { text-align: center; }
+  .check { display: flex; gap: 8px; align-items: center; min-height: 40px; font-size: 13px; }
+  .err { color: var(--err); font-size: 12px; margin-top: 3px; } .err:empty { display: none; }
+  .btn { width: 100%; min-height: 46px; margin-top: 14px; border: 0; border-radius: 12px; background: var(--accent); color: var(--accent-fg); font-weight: 600; font-size: 15px; }
+  .btn.ghost { background: var(--card); color: var(--fg); } .btn:disabled { opacity: .6; }
+  .row { display: flex; gap: 8px; } .row > * { flex: 1; }
+  .sheet { position: fixed; inset: 0; z-index: 10; display: flex; align-items: flex-end; background: rgba(0, 0, 0, .45); }
+  .sheet > div { width: 100%; max-width: 480px; max-height: 85vh; overflow: auto; margin: 0 auto; padding: 14px 16px calc(16px + env(safe-area-inset-bottom));
+                 background: var(--bg); border-radius: 16px 16px 0 0; }
+  .sheet .card > div { margin: 2px 0; }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script>
+"use strict";
+const WORKER = "https://trainwatcher.trnwtchbot.workers.dev";
+// ponytail: fixed booking horizon (Italo's when the form was designed); move it forward as the operators open later dates.
+const LAST_DAY = "2027-03-31";
+// Mirror of trainwatcher.model.FARES: fare id -> the only passenger type allowed to buy it (null = everyone). Checked by tests/test_webapp.py.
+const FARES = {"T:Base": null, "T:Economy": null, "T:Super Economy": null, "T:FrecciaYOUNG": "young", "T:FrecciaSENIOR": "senior",
+  "I:Flex": null, "I:Economy": null, "I:Low Cost": null, "I:eXtra Magic": null, "I:Italo Giovani": "young", "I:Italo Senior": "senior",
+  "TI:A/R same day": null};
+const SAME_DAY_FARE = "TI:A/R same day";
+const CLASSES = {"T": ["Standard", "Premium", "Business", "Executive"], "I": ["Smart", "Prima", "Club", "Salotto"]};
+const OPS = {T: "Trenitalia", I: "Italo"};
+const PRESETS = {any: null, morning: ["06:00", "12:00"], afternoon: ["12:00", "18:00"], evening: ["18:00", "23:59"], custom: null};
+const STR = {
+  "en": {"search": "Search", "watchT": "Watch", "modeL": "Search or watch", "from": "From", "to": "To", "swap": "Swap From and To", "clear": "Clear",
+    "trip": "Trip", "oneway": "One way", "round": "Round trip", "out": "Outbound", "ret": "Return", "date": "Date",
+    "days": "Days", "d1": "One day", "dN": "Several days", "dM": "Whole month", "pickStart": "Tap the first day", "pickEnd": "Now tap the last day",
+    "prevM": "Previous month", "nextM": "Next month", "same_day": "Same-day return: the A/R fare is included",
+    "time": "Departure time", "any": "Any time", "morning": "Morning (6–12)", "afternoon": "Afternoon (12–18)", "evening": "Evening (18–24)", "custom": "Custom…",
+    "tFrom": "Earliest departure", "tTo": "Latest departure",
+    "pax": "Passenger", "adult": "Adult", "young": "Young (<30)", "senior": "Senior (60+)",
+    "kind": "Track", "cheapest": "Cheapest fare", "fares": "Specific fares", "class": "Class", "anyClass": "Any class", "ops": "Operators",
+    "max": "Max price (€)", "maxRT": "Max total price (€)", "opt": "optional",
+    "rises": "Also alert when the price goes up", "risesFare": "Fare watches always alert on rises and drops",
+    "review": "Review", "back": "Back", "create": "Create watch", "sending": "Sending…",
+    "e_station": "Pick a station from the list", "e_same": "From and To must differ", "e_date": "Pick a future date", "e_long": "Pick at most 31 days",
+    "e_time": "The end time must not be before the start time", "e_ret": "Return must not be before the outbound", "e_fares": "Pick at least one fare",
+    "e_max": "Enter a price between 0 and 10,000 €", "e_pax": "not for this passenger",
+    "noTg": "Open this form from the bot in Telegram: submitting only works there.", "noSt": "Could not load the station list.",
+    "sendFail": "Could not reach the bot. Please try again."},
+  "it": {"search": "Cerca", "watchT": "Monitora", "modeL": "Cerca o monitora", "from": "Da", "to": "A", "swap": "Inverti partenza e arrivo", "clear": "Cancella",
+    "trip": "Viaggio", "oneway": "Solo andata", "round": "Andata e ritorno", "out": "Andata", "ret": "Ritorno", "date": "Data",
+    "days": "Giorni", "d1": "Un giorno", "dN": "Più giorni", "dM": "Mese intero", "pickStart": "Tocca il primo giorno", "pickEnd": "Ora tocca l’ultimo giorno",
+    "prevM": "Mese precedente", "nextM": "Mese successivo", "same_day": "Ritorno in giornata: inclusa la tariffa A/R",
+    "time": "Orario di partenza", "any": "Qualsiasi", "morning": "Mattina (6–12)", "afternoon": "Pomeriggio (12–18)", "evening": "Sera (18–24)", "custom": "Personalizzato…",
+    "tFrom": "Partenza dalle", "tTo": "Partenza entro le",
+    "pax": "Passeggero", "adult": "Adulto", "young": "Giovane (<30)", "senior": "Senior (60+)",
+    "kind": "Monitora", "cheapest": "Più economica", "fares": "Tariffe specifiche", "class": "Classe", "anyClass": "Qualsiasi classe", "ops": "Operatori",
+    "max": "Prezzo massimo (€)", "maxRT": "Prezzo massimo totale (€)", "opt": "facoltativo",
+    "rises": "Avvisami anche quando il prezzo sale", "risesFare": "Con tariffe specifiche avvisi sempre su rialzi e ribassi",
+    "review": "Riepilogo", "back": "Indietro", "create": "Crea monitoraggio", "sending": "Invio…",
+    "e_station": "Scegli una stazione dall'elenco", "e_same": "Partenza e arrivo devono essere diversi", "e_date": "Scegli una data futura", "e_long": "Scegli al massimo 31 giorni",
+    "e_time": "L'orario finale non può precedere quello iniziale", "e_ret": "Il ritorno non può precedere l'andata", "e_fares": "Scegli almeno una tariffa",
+    "e_max": "Inserisci un prezzo tra 0 e 10.000 €", "e_pax": "non per questo passeggero",
+    "noTg": "Apri questo modulo dal bot in Telegram: l'invio funziona solo lì.", "noSt": "Impossibile caricare l'elenco delle stazioni.",
+    "sendFail": "Impossibile contattare il bot. Riprova."}
+};
+
+// ---------- environment ----------
+const P = new URLSearchParams(location.search);
+const lang = P.get("lang") === "it" ? "it" : "en";
+const t = k => STR[lang][k];
+const TG = window.Telegram && window.Telegram.WebApp, inTG = !!(TG && TG.initData);
+let mode = P.get("mode");
+if (mode !== "search" && mode !== "watch") { try { mode = localStorage.getItem("tw.mode"); } catch (e) { /* storage blocked */ } }
+if (mode !== "search") mode = "watch";
+const saveMode = () => { try { localStorage.setItem("tw.mode", mode); } catch (e) { /* storage blocked */ } };
+document.documentElement.lang = lang;
+const scheme = () => document.documentElement.dataset.scheme =
+  inTG ? TG.colorScheme : matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+scheme();
+if (inTG) { TG.ready(); TG.expand(); TG.onEvent("themeChanged", scheme); }
+
+// ---------- dates (local calendar days as "YYYY-MM-DD") ----------
+const pad = n => String(n).padStart(2, "0");
+const ymd = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+const addDays = (s, n) => { const [y, m, d] = s.split("-").map(Number); return ymd(new Date(y, m - 1, d + n)); };
+const addMonths = (s, n) => ymd(new Date(+s.slice(0, 4), +s.slice(5, 7) - 1 + n, 1)).slice(0, 7);
+const monthEnd = s => `${s}-${pad(new Date(+s.slice(0, 4), +s.slice(5, 7), 0).getDate())}`;
+const TODAY = ymd(new Date());
+const fmt = (s, o) => { const r = new Intl.DateTimeFormat(lang === "it" ? "it-IT" : "en-GB", o).format(new Date(s + "T12:00:00")); return r[0].toUpperCase() + r.slice(1); };
+
+// ---------- state ----------
+const newLeg = (d, a, b) => ({mode: "d1", d1: d, dA: d, dB: addDays(d, 6), m: d.slice(0, 7), tp: "any", tA: a, tB: b});
+const S = {from: "", to: "", trip: "oneway", pax: "adult", kind: "cheapest", fares: [], cls: [], ops: ["T", "I"], max: "", rises: false,
+  out: newLeg(addDays(TODAY, 35), "07:00", "10:00"), ret: newLeg(addDays(TODAY, 37), "17:00", "21:00")};
+const typed = {from: "", to: ""};  // station text typed but not picked yet
+let stations = [], loadErr = false;
+let open = null;                   // "cal-out" | "cal-ret" | "cls" | "fares": the one popover shown
+let view = "", pickEnd = false;    // calendar month shown; range picking waits for its last day
+let showErrors = false, errors = {}, reviewing = false, busy = false, sendErr = "";
+
+// ---------- derived values ----------
+const legKeys = () => S.trip === "round" ? ["out", "ret"] : ["out"];
+const days = L => L.mode === "d1" ? [L.d1] : L.mode === "dM" ? [L.m] : L.dA === L.dB ? [L.dA] : [L.dA, L.dB];
+const firstLast = L => L.mode === "dM" ? [L.m + "-01", monthEnd(L.m)] : [days(L)[0], days(L).at(-1)];
+const dayCount = L => { const [a, b] = firstLast(L); return (Date.parse(b) - Date.parse(a)) / 864e5 + 1; };
+const sameDay = () => S.trip === "round" && days(S.out).length === 1 && days(S.out)[0].length === 10 && days(S.ret).join() === days(S.out)[0];
+const fareShown = id => S.ops.some(o => id.split(":")[0].includes(o)) && (id !== SAME_DAY_FARE || sameDay());
+const fareOk = id => FARES[id] === null || FARES[id] === S.pax;
+const chosenFares = () => S.fares.filter(f => fareShown(f) && fareOk(f));
+const chosenCls = () => S.cls.filter(c => S.ops.some(o => CLASSES[o].includes(c)));
+const fareName = id => id.split(":")[1];
+const stationName = k => (stations.find(s => s.k === k) || {}).n || "";
+const flip = (arr, v) => arr.includes(v) ? arr.filter(x => x !== v) : [...arr, v];
+
+function validate() {
+  const e = {}, keys = new Set(stations.map(s => s.k));
+  if (!keys.has(S.from)) e.from = t("e_station");
+  if (!keys.has(S.to)) e.to = t("e_station");
+  else if (S.to === S.from) e.to = t("e_same");
+  for (const k of legKeys()) {
+    const L = S[k];
+    if (firstLast(L)[1] < TODAY) e[k] = t("e_date");
+    else if (dayCount(L) > 31) e[k] = t("e_long");
+    else if (L.tp === "custom" && !(L.tA && L.tB && L.tA <= L.tB)) e[k] = t("e_time");
+  }
+  if (S.trip === "round" && !e.ret && firstLast(S.ret)[1] < firstLast(S.out)[0]) e.ret = t("e_ret");
+  if (S.kind === "fares" && !chosenFares().length) e.fares = t("e_fares");
+  if (mode === "watch" && S.max !== "" && !(+S.max > 0 && +S.max < 10000)) e.max = t("e_max");
+  return errors = e;
+}
+
+// The exact shape trainwatcher.model.from_payload expects.
+function payload() {
+  const leg = L => ({d: days(L), w: L.tp === "custom" ? [L.tA, L.tB] : PRESETS[L.tp]});
+  const cls = chosenCls();
+  return {v: 1, lang: lang, from: S.from, to: S.to, out: leg(S.out), ret: S.trip === "round" ? leg(S.ret) : null, pax: S.pax,
+    fares: S.kind === "fares" ? chosenFares() : null, cls: cls.length ? cls : null, ops: S.ops,
+    max: mode === "watch" && S.max !== "" ? +S.max : null, rises: mode === "watch" && S.kind === "cheapest" && S.rises};
+}
+
+// ---------- submit ----------
+function go() {
+  showErrors = true; sendErr = "";
+  if (Object.keys(validate()).length) {
+    render();
+    document.querySelector(".err:not(:empty)")?.scrollIntoView({block: "center", behavior: "smooth"});
+  } else if (mode === "search") send();
+  else { reviewing = true; render(); document.querySelector(".sheet .btn:last-child").focus(); }
+}
+
+async function send() {
+  if (!inTG) { sendErr = t("noTg"); render(); return; }
+  busy = true; sendErr = ""; render();
+  try {
+    const r = await fetch(WORKER + "/form", {method: "POST", headers: {"Content-Type": "text/plain"},
+      body: JSON.stringify({initData: TG.initData, mode: mode, data: payload()})});
+    const j = await r.json().catch(() => ({}));
+    if (j.ok) { saveMode(); TG.close(); return; }
+    sendErr = j.error || t("sendFail");
+  } catch (e) {
+    sendErr = t("sendFail");
+  }
+  busy = false; render();
+}
+
+// ---------- widgets ----------
+function h(tag, attrs, ...kids) {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (k.startsWith("on")) e.addEventListener(k.slice(2), v);
+    else if (v !== false && v != null) e.setAttribute(k, v === true ? "" : v);
+  }
+  for (const c of kids.flat(2)) if (c != null && c !== false && c !== "") e.append(c);
+  return e;
+}
+const err = (k, cls) => h("div", {class: "err " + (cls || ""), id: "e-" + k, "aria-live": "polite"});
+const select = (label, opts, cur, set, cls) => h("select", {"aria-label": label, class: cls, onchange: e => { set(e.target.value); render(); }},
+  opts.map(([v, l]) => h("option", {value: v, selected: v === cur}, l)));
+const seg = (label, opts, cur, set) => h("div", {class: "seg", role: "group", "aria-label": label},
+  opts.map(([v, l]) => h("button", {type: "button", "aria-pressed": String(v === cur), onclick: () => { set(v); render(); }}, l)));
+const chip = (on, label, toggle, sub, disabled) => h("button", {type: "button", class: "chip", "aria-pressed": String(on), disabled,
+  onclick: () => { toggle(); render(); }}, label, sub && h("small", {}, " " + sub));
+const popBtn = (name, title, label, cls) => h("button", {type: "button", class: "tog " + (cls || ""), "aria-expanded": String(open === name),
+  "aria-label": title + ": " + label, onclick: () => { open = open === name ? null : name; render(); }}, label + " ▾");
+
+// Station autocomplete: word-prefix match, case and accents ignored (as trainwatcher.stations.search), city groups first.
+const fold = s => s.normalize("NFKD").replace(/[̀-ͯ]/g, "").toLowerCase();
+function station(key) {
+  let hits = [], hl = -1;
+  const inp = h("input", {id: "st-" + key, value: stationName(S[key]) || typed[key], placeholder: t(key), "aria-label": t(key), autocomplete: "off",
+    role: "combobox", "aria-autocomplete": "list", "aria-expanded": "false", "aria-controls": "ls-" + key, "aria-describedby": "e-" + key});
+  const ul = h("ul", {id: "ls-" + key, class: "list", role: "listbox", hidden: true});
+  const show = () => {
+    const q = " " + fold(inp.value).trim();
+    hits = q.length < 2 ? [] : stations.filter(s => (" " + fold(s.n).replace(/-/g, " ")).includes(q)).sort((a, b) => (b.g || 0) - (a.g || 0)).slice(0, 8);
+    ul.replaceChildren(...hits.map((s, i) => h("li", {id: `ls-${key}-${i}`, role: "option", "aria-selected": String(i === hl),
+      onmousedown: e => e.preventDefault(), onclick: () => pick(s)}, s.n, s.g ? h("small", {}, "🏙️") : null, s.t ? null : h("small", {}, "Italo"))));
+    ul.hidden = !hits.length;
+    inp.setAttribute("aria-expanded", String(!!hits.length));
+    if (hl >= 0 && hits.length) inp.setAttribute("aria-activedescendant", `ls-${key}-${hl}`); else inp.removeAttribute("aria-activedescendant");
+  };
+  const hide = () => { hits = []; hl = -1; show(); };
+  const pick = s => { S[key] = s.k; typed[key] = ""; inp.blur(); render(); };
+  inp.addEventListener("input", () => { S[key] = ""; typed[key] = inp.value; hl = -1; show(); paintErrors(); });
+  inp.addEventListener("focus", () => { if (!S[key]) show(); });
+  inp.addEventListener("blur", hide);
+  inp.addEventListener("keydown", e => {
+    const n = hits.length;
+    if (!n) return;
+    if (e.key === "Enter") { e.preventDefault(); pick(hits[Math.max(hl, 0)]); return; }
+    if (e.key === "Escape") { e.stopPropagation(); hide(); return; }
+    if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+    hl = e.key === "ArrowDown" ? (hl + 1) % n : hl <= 0 ? n - 1 : hl - 1;
+    e.preventDefault(); show();
+  });
+  const clr = h("button", {type: "button", class: "clr", "aria-label": t("clear") + " " + t(key), onmousedown: e => e.preventDefault(),
+    onclick: () => { S[key] = ""; typed[key] = ""; render(); document.getElementById("st-" + key).focus(); }}, "✕");
+  return h("div", {class: "ac"}, inp, clr, ul);
+}
+
+// Compact date label for half a row: "Tue 10 Nov", "12–15 Nov", "28 Nov – 3 Dec", "Nov 2026"; the year only when not this year.
+function dateLabel(L) {
+  const yr = s => s.slice(0, 4) === TODAY.slice(0, 4) ? {} : {year: "2-digit"};
+  const dm = s => fmt(s, {day: "numeric", month: "short", ...yr(s)});
+  if (L.mode === "dM") return fmt(L.m + "-15", {month: "short", year: "numeric"});
+  if (L.mode === "d1") return fmt(L.d1, {weekday: "short", day: "numeric", month: "short", ...yr(L.d1)});
+  if (L.dA === L.dB) return dm(L.dA);
+  if (L.dA.slice(0, 7) === L.dB.slice(0, 7)) return +L.dA.slice(8) + "–" + dm(L.dB);
+  return fmt(L.dA, {day: "numeric", month: "short"}) + " – " + dm(L.dB);
+}
+const legIcon = k => S.trip === "round" ? (k === "out" ? "→ " : "← ") : "📅 ";
+const timeLabel = L => L.tp === "custom" ? L.tA + "–" + L.tB : t(L.tp);
+
+function toggleCal(k) {
+  if (open === "cal-" + k) open = null;
+  else {
+    open = "cal-" + k; pickEnd = false;
+    view = firstLast(S[k])[0].slice(0, 7);
+    if (view < TODAY.slice(0, 7) || view > LAST_DAY.slice(0, 7)) view = TODAY.slice(0, 7);
+  }
+  render();
+}
+
+function pickDay(L, s) {
+  if (L.mode === "d1") { L.d1 = s; open = null; }
+  else if (!pickEnd) { L.dA = L.dB = s; pickEnd = true; }
+  else { if (s < L.dA) [L.dA, L.dB] = [s, L.dA]; else L.dB = s; open = null; }
+  render();
+}
+
+function calendar(k) {
+  const L = S[k];
+  return h("div", {class: "cal span"},
+    seg(t("days"), [["d1", t("d1")], ["dN", t("dN")], ["dM", t("dM")]], L.mode, v => { L.mode = v; pickEnd = false; }),
+    L.mode === "dM" ? monthGrid(L) : dayGrid(L));
+}
+
+function monthGrid(L) {
+  const months = [];
+  for (let m = TODAY.slice(0, 7); m <= LAST_DAY.slice(0, 7); m = addMonths(m, 1)) months.push(m);
+  return h("div", {class: "calg mons"}, months.map(m => h("button", {type: "button", class: "day", "aria-pressed": String(m === L.m),
+    "aria-label": fmt(m + "-15", {month: "long", year: "numeric"}), onclick: () => { L.m = m; open = null; render(); }},
+    fmt(m + "-15", {month: "short"}) + " ’" + m.slice(2, 4))));
+}
+
+function dayGrid(L) {
+  const [y, m] = view.split("-").map(Number), lead = (new Date(y, m - 1, 1).getDay() + 6) % 7, n = new Date(y, m, 0).getDate();
+  const cells = Array.from({length: lead}, () => h("span"));
+  for (let d = 1; d <= n; d++) {
+    const s = `${view}-${pad(d)}`, on = L.mode === "d1" ? s === L.d1 : s === L.dA || s === L.dB;
+    cells.push(h("button", {type: "button", class: "day" + (L.mode === "dN" && s > L.dA && s < L.dB ? " in" : ""), "aria-pressed": String(on),
+      "aria-label": fmt(s, {weekday: "long", day: "numeric", month: "long"}), disabled: s < TODAY || s > LAST_DAY, onclick: () => pickDay(L, s)}, String(d)));
+  }
+  const nav = step => h("button", {type: "button", "aria-label": t(step < 0 ? "prevM" : "nextM"),
+    disabled: step < 0 ? view <= TODAY.slice(0, 7) : view >= LAST_DAY.slice(0, 7), onclick: () => { view = addMonths(view, step); render(); }}, step < 0 ? "‹" : "›");
+  const wd = lang === "it" ? ["Lu", "Ma", "Me", "Gi", "Ve", "Sa", "Do"] : ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"];
+  return [h("div", {class: "calh"}, nav(-1), h("b", {}, fmt(view + "-15", {month: "long", year: "numeric"})), nav(1)),
+    L.mode === "dN" ? h("div", {class: "hint c"}, t(pickEnd ? "pickEnd" : "pickStart")) : null,
+    h("div", {class: "calg"}, wd.map(w => h("span", {class: "wd", "aria-hidden": "true"}, w)), cells)];
+}
+
+// Per leg one row: [date ▾ | time ▾], plus [from | to] times for a custom window and the calendar when open.
+function legRows(k) {
+  const L = S[k], time = (f, label) => h("input", {type: "time", value: L[f], "aria-label": t(label), oninput: e => { L[f] = e.target.value; paintErrors(); }});
+  return [h("div", {class: "g"},
+    h("button", {type: "button", class: "tog", "aria-expanded": String(open === "cal-" + k), "aria-describedby": "e-" + k,
+      "aria-label": (S.trip === "round" ? t(k) : t("date")) + ": " + dateLabel(L), onclick: () => toggleCal(k)}, legIcon(k) + dateLabel(L) + " ▾"),
+    select(t("time"), Object.keys(PRESETS).map(p => [p, "🕒 " + t(p)]), L.tp, v => { L.tp = v; if (PRESETS[v]) [L.tA, L.tB] = PRESETS[v]; }),
+    L.tp === "custom" && [time("tA", "tFrom"), time("tB", "tTo")],
+    open === "cal-" + k && calendar(k)),
+  err(k)];
+}
+
+function fareChips() {
+  return h("div", {class: "chips"}, Object.keys(FARES).filter(fareShown).map(id => {
+    const ok = fareOk(id), op = OPS[id.split(":")[0]];
+    return chip(ok && S.fares.includes(id), fareName(id), () => { S.fares = flip(S.fares, id); }, [op, ok ? "" : t("e_pax")].filter(Boolean).join(" · "), !ok);
+  }));
+}
+
+function classChips() {
+  const cls = chosenCls();
+  return h("div", {class: "chips"}, chip(!cls.length, t("anyClass"), () => { S.cls = []; }),
+    S.ops.flatMap(o => CLASSES[o]).map(c => chip(cls.includes(c), c, () => { S.cls = flip(S.cls, c); })));
+}
+
+function summary() {
+  const fares = chosenFares(), cls = chosenCls();
+  const legLine = k => h("div", {}, legIcon(k) + dateLabel(S[k]) + " · 🕒 " + timeLabel(S[k]));
+  return [h("div", {}, "🚉 ", h("b", {}, stationName(S.from)), " → ", h("b", {}, stationName(S.to))),
+    legKeys().map(legLine),
+    h("div", {}, "👤 " + t(S.pax) + " · " + (S.kind === "fares"
+      ? "🎫 " + fares.map(f => fareName(f) + (OPS[f.split(":")[0]] ? " (" + OPS[f.split(":")[0]] + ")" : "")).join(", ") : "💶 " + t("cheapest"))),
+    h("div", {}, "🚆 " + S.ops.map(o => OPS[o]).join(" + ") + " · 🪑 " + (cls.join(", ") || t("anyClass"))),
+    S.max !== "" && h("div", {}, "💶 " + t(S.trip === "round" ? "maxRT" : "max") + ": " + S.max),
+    S.kind === "fares" ? h("div", {class: "hint"}, "ℹ️ " + t("risesFare")) : S.rises && h("div", {}, "📈 " + t("rises"))];
+}
+
+function sheet() {
+  const close = () => { reviewing = false; sendErr = ""; render(); };
+  return h("div", {class: "sheet", onclick: e => { if (e.target === e.currentTarget) close(); }},
+    h("div", {role: "dialog", "aria-modal": "true", "aria-labelledby": "rv-title"},
+      h("b", {id: "rv-title"}, t("review")),
+      h("div", {class: "card"}, summary()),
+      sendErr && h("div", {class: "err", role: "alert"}, sendErr),
+      h("div", {class: "row"}, h("button", {type: "button", class: "btn ghost", onclick: close}, t("back")),
+        h("button", {type: "button", class: "btn", disabled: busy, onclick: send}, busy ? t("sending") : t("create")))));
+}
+
+function form() {
+  const isSearch = mode === "search";
+  return [
+    !inTG && h("div", {class: "hint"}, "ℹ️ " + t("noTg")),
+    loadErr && h("div", {class: "err", role: "alert"}, t("noSt")),
+    seg(t("modeL"), [["search", "🔎 " + t("search")], ["watch", "➕ " + t("watchT")]], mode, v => { mode = v; showErrors = false; sendErr = ""; saveMode(); }),
+    h("div", {class: "route"},
+      h("div", {}, station("from"), err("from")),
+      h("button", {type: "button", class: "swap", "aria-label": t("swap"),
+        onclick: () => { [S.from, S.to] = [S.to, S.from]; [typed.from, typed.to] = [typed.to, typed.from]; render(); }}, "⇄"),
+      h("div", {}, station("to"), err("to"))),
+    h("div", {class: "g"},
+      select(t("trip"), [["oneway", "→ " + t("oneway")], ["round", "⇄ " + t("round")]], S.trip, v => { S.trip = v; }),
+      select(t("pax"), ["adult", "young", "senior"].map(p => [p, "👤 " + t(p)]), S.pax, v => { S.pax = v; })),
+    h("div", {class: "sec"}, legRows("out"), S.trip === "round" && legRows("ret"), sameDay() && h("div", {class: "hint"}, "🔁 " + t("same_day"))),
+    h("div", {class: "sec g"},
+      select(t("kind"), [["cheapest", "💶 " + t("cheapest")], ["fares", "🎫 " + t("fares")]], S.kind, v => { S.kind = v; open = v === "fares" ? "fares" : null; }),
+      popBtn("cls", t("class"), "🪑 " + (chosenCls().join(", ") || t("anyClass"))),
+      open === "cls" && h("div", {class: "card span"}, classChips()),
+      select(t("ops"), [["TI", "🚆 Trenitalia + Italo"], ["T", "🚆 Trenitalia"], ["I", "🚆 Italo"]], S.ops.join(""), v => { S.ops = v.split(""); }, isSearch ? "span" : ""),
+      !isSearch && h("input", {type: "number", inputmode: "decimal", min: "1", step: "any", value: S.max, placeholder: "€ max (" + t("opt") + ")",
+        "aria-label": t(S.trip === "round" ? "maxRT" : "max"), "aria-describedby": "e-max", oninput: e => { S.max = e.target.value; paintErrors(); }}),
+      !isSearch && err("max", "span"),
+      S.kind === "fares" && popBtn("fares", t("fares"), "🎫 " + (chosenFares().map(fareName).join(", ") || t("fares") + "…"), "span"),
+      S.kind === "fares" && open === "fares" && h("div", {class: "card span"}, fareChips()),
+      S.kind === "fares" && err("fares", "span")),
+    !isSearch && (S.kind === "fares" ? h("div", {class: "hint"}, "ℹ️ " + t("risesFare"))
+      : h("label", {class: "check"}, h("input", {type: "checkbox", checked: S.rises, onchange: e => { S.rises = e.target.checked; }}), t("rises"))),
+    !reviewing && sendErr && h("div", {class: "err", role: "alert"}, sendErr),
+    h("button", {type: "button", class: "btn", disabled: busy && !reviewing, onclick: go},
+      busy && !reviewing ? t("sending") : isSearch ? "🔎 " + t("search") + " ▸" : t("review") + " ▸"),
+    reviewing && sheet()];
+}
+
+// Errors stay hidden until the first submit; from then on they follow every change.
+function paintErrors() {
+  validate();
+  for (const el of document.querySelectorAll(".err[id]")) el.textContent = showErrors && errors[el.id.slice(2)] || "";
+}
+
+function render() {
+  const app = document.getElementById("app");
+  const focusables = () => [...app.querySelectorAll("button, input, select")];
+  const i = focusables().indexOf(document.activeElement);  // keep keyboard focus across the rebuild
+  app.replaceChildren(...form().flat().filter(Boolean));
+  if (i >= 0 && focusables()[i]) focusables()[i].focus({preventScroll: true});
+  paintErrors();
+}
+
+document.addEventListener("keydown", e => {
+  if (e.key !== "Escape" || !(reviewing || open)) return;
+  if (reviewing) reviewing = false; else open = null;
+  render();
+});
+
+render();
+fetch("stations.json").then(r => r.json()).then(j => { stations = j; render(); }).catch(() => { loadErr = true; render(); });
+</script>
+</body>
+</html>
