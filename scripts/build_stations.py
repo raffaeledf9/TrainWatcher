@@ -3,7 +3,9 @@
 Sources (downloaded once into .cache/; delete a file there to refresh it):
 - Trenitalia GTFS (CC-BY-4.0, official NeTEx via deryclem/trenitalia-gtfs): stops of FR/FA/FB trips,
   whose StopPlace id suffix is the lefrecce location id, with coordinates;
-- trenitalia.com cruscotto-stations.json (first party): lefrecce spelling and Frecce flags;
+- trenitalia.com cruscotto-stations.json (first party): lefrecce spelling and Frecce flags. Flagged
+  names that no FR/FA/FB trip stops at in the GTFS window (seasonal, or Frecce via FrecciaLink) get
+  their id from one lefrecce name search each, and are kept only if the GTFS shows rail service there;
 - Italo /api/v1/stations (anonymous session): Italo codes, city groups (MAC) and coordinates.
 
 Entry: {"k": key, "n": name, "t": lefrecce id|null, "i": Italo code|null, "g": 1 if city group, "a": abbr}.
@@ -16,7 +18,9 @@ import io
 import json
 import math
 import re
+import time
 import unicodedata
+import urllib.parse
 import urllib.request
 import uuid
 import zipfile
@@ -28,7 +32,9 @@ OUT = ROOT / "webapp" / "stations.json"
 UA = {"User-Agent": "Mozilla/5.0 (TrainWatcher station catalogue builder)"}
 CRUSCOTTO = "https://www.trenitalia.com/content/trenitalia/it.cruscotto-stations.json"
 GTFS = "https://github.com/deryclem/trenitalia-gtfs/raw/main/gtfs-trenitalia.zip"
+LEFRECCE = "https://www.lefrecce.it/Channels.Website.BFF.WEB/website/locations/search?"
 MAX_KM = 0.5  # an Italo station this close to a Frecce stop is the same station
+FRECCE, COACH = {"FR", "FA", "FB"}, {"BUS", "FL"}  # GTFS route_short_name; FL = FrecciaLink coach
 
 # Trenitalia multistation ids "( Tutte Le Stazioni )", checked with lefrecce locations/search on
 # 2026-10-06. Cities with >= 2 Frecce stations, plus Bologna, Bari and Reggio Calabria (whole-city
@@ -53,7 +59,8 @@ CITY = {"Reggio Emilia": "Reggio Emilia", "Reggio Calabria": "Reggio Calabria", 
 # City -> 3-letter code, where the first three letters would collide or read badly.
 ABBR = {"Reggio Emilia": "RGE", "Reggio Calabria": "RGC", "Gioia del Colle": "GDC", "Gioia Tauro": "GTA",
         "La Spezia": "SPE", "San Benedetto": "SBT", "San Donà": "SDP", "Villa San Giovanni": "VSG",
-        "Barletta": "BLT", "Bolzano": "BZO", "Torano": "TLA", "Bressanone": "BRX",
+        "Barletta": "BLT", "Bardonecchia": "BDN", "Ventimiglia": "VTM", "Castelfranco": "CFV", "Cattolica": "CTL",
+        "Chiasso": "CHS", "Chiusi": "CHU", "Monza": "MZA", "Vercelli": "VCL", "Bolzano": "BZO", "Torano": "TLA", "Bressanone": "BRX",
         "Cassino": "CSN", "Civitanova": "CVM", "Ferrandina": "FRD", "Fortezza": "FTZ", "Modane": "MDN",
         "Monopoli": "MNP", "Parma": "PRM", "Pesaro": "PSR", "Peschiera": "PDG", "Pisciotta": "PPA",
         "Portogruaro": "PGR", "Rovereto": "RVR", "Termoli": "TRM", "Terontola": "TRT", "Treviso": "TRV"}
@@ -101,23 +108,37 @@ def km(a, b):
     return 12742 * math.asin(math.sqrt(h))
 
 
-def frecce_stops():
-    """{lefrecce id: (GTFS name, (lat, lon))} for every stop of an FR/FA/FB trip."""
+def gtfs_stops():
+    """{lefrecce id: (GTFS name, (lat, lon), {route_short_name of every trip stopping there})}."""
     z = zipfile.ZipFile(io.BytesIO(cached("gtfs.zip", lambda: get(GTFS))))
     rows = lambda n: csv.DictReader(io.TextIOWrapper(z.open(n), "utf-8-sig"))
-    routes = {r["route_id"] for r in rows("routes.txt") if r["route_short_name"] in ("FR", "FA", "FB")}
-    trips = {t["trip_id"] for t in rows("trips.txt") if t["route_id"] in routes}
-    used = {s["stop_id"] for s in rows("stop_times.txt") if s["trip_id"] in trips}
+    route = {r["route_id"]: r["route_short_name"] for r in rows("routes.txt")}
+    trip = {t["trip_id"]: route[t["route_id"]] for t in rows("trips.txt")}
     stops = {s["stop_id"]: s for s in rows("stops.txt")}
     out = {}
-    for sid in used:
-        s = stops[stops[sid]["parent_station"] or sid]
-        out[int(s["stop_id"].rsplit(":", 1)[1])] = (s["stop_name"], (s["stop_lat"], s["stop_lon"]))
+    for st in rows("stop_times.txt"):
+        s = stops[stops[st["stop_id"]]["parent_station"] or st["stop_id"]]
+        tid = int(s["stop_id"].rsplit(":", 1)[1])
+        out.setdefault(tid, (s["stop_name"], (s["stop_lat"], s["stop_lon"]), set()))[2].add(trip[st["trip_id"]])
     return out
 
 
-def cruscotto_lookup():
-    """GTFS name -> (lefrecce spelling, Frecce flag) or None, matched on cruscotto text and value."""
+def lefrecce_search(names):
+    """{name: lefrecce locations/search results}: one cached request per name, >= 0.5 s apart."""
+    p = CACHE / "lefrecce-search.json"
+    found = json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}
+    for n in names:
+        if n not in found:
+            time.sleep(0.6)
+            found[n] = json.loads(get(LEFRECCE + urllib.parse.urlencode({"name": n, "limit": 10})))
+            CACHE.mkdir(exist_ok=True)
+            p.write_text(json.dumps(found, ensure_ascii=False), encoding="utf-8")
+    return found
+
+
+def cruscotto():
+    """(lookup, flagged): lookup maps a GTFS name to (lefrecce spelling, Frecce flag) or None,
+    matched on cruscotto text and value; flagged lists the Frecce-flagged station names."""
     raw = cached("cruscotto.json", lambda: get(CRUSCOTTO))
     try:
         data = json.loads(raw.decode("utf-8"))
@@ -129,6 +150,7 @@ def cruscotto_lookup():
         for s in (e["text"], e["value"]):
             if not names.get(norm(s), ("", False))[1]:
                 names[norm(s)] = (s, flag)
+    flagged = sorted({e["value"] for e in data if (e["isF"] or e["FA"] or e["FB"]) and "tutte" not in norm(e["value"])})
 
     def lookup(gtfs_name):
         g = norm(gtfs_name)
@@ -139,7 +161,7 @@ def cruscotto_lookup():
             if len(hits) == 1:
                 return hits[0]
         return None
-    return lookup
+    return lookup, flagged
 
 
 def city(name):
@@ -156,10 +178,14 @@ def slug(s):
 
 
 def build():
-    lookup, stops, log = cruscotto_lookup(), frecce_stops(), []
-    stations = {}  # lefrecce id -> entry
-    for tid, (gname, pos) in stops.items():
+    (lookup, flagged), stops, log = cruscotto(), gtfs_stops(), []
+    stations, have = {}, set()  # lefrecce id -> entry; trenitalia.com names already in
+    for tid, (gname, pos, routes) in stops.items():
+        if not routes & FRECCE:
+            continue
         hit = lookup(gname)
+        if hit:
+            have.add(norm(hit[0]))
         if tid // 10**6 != 830 and not (hit and hit[1]):
             log.append(f"skipped, abroad and not a Frecce destination on trenitalia.com: {gname}")
             continue
@@ -168,6 +194,24 @@ def build():
         if hit and not hit[1]:
             log.append(f"kept, not flagged Frecce on trenitalia.com: {hit[0]}")
         stations[tid] = {"n": hit[0] if hit else gname.title(), "t": tid, "i": None, "pos": pos}
+
+    # Frecce destinations on trenitalia.com that no FR/FA/FB trip stops at in this GTFS window.
+    missing = [n for n in flagged if norm(n) not in have]
+    found, added = lefrecce_search(missing), 0
+    for n in missing:
+        r = next((r for r in found[n] if norm(r["name"]) == norm(n)), None)
+        if r and r["id"] in stations:
+            continue  # already in under another spelling
+        why = ("no exact lefrecce match" if not r else "city group" if r.get("multistation")
+               else "bus stop" if re.search(r"\bbus\b|autostazione", r["name"], re.I)
+               else "no Trenitalia trains in the GTFS (coach stop or other operator)" if r["id"] not in stops
+               else "coach only in the GTFS (BUS/FrecciaLink)" if stops[r["id"]][2] <= COACH else "")
+        if why:
+            log.append(f"skipped trenitalia.com Frecce name {n}: {why}")
+        else:
+            stations[r["id"]] = {"n": n, "t": r["id"], "i": None, "pos": stops[r["id"]][1]}
+            added += 1
+    log.append(f"added {added} Frecce destinations missing from the GTFS window")
 
     italo = json.loads(cached("italo.json", italo_stations).decode("utf-8"))["stations"]
     italo = [s for s in italo if s["isItaloStation"] and s["stationClass"] != "B"]

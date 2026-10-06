@@ -27,6 +27,11 @@ class StationsTest(unittest.TestCase):
             self.assertIsNone(e["t"], key)
             self.assertEqual(list(stations.operator_ids(e)), [ITALO])
 
+    def test_frecce_destinations_outside_gtfs_window_but_no_coach_stops(self):
+        self.assertEqual(self.ids("bergamo"), {TRENITALIA: 830001529})
+        self.assertEqual(self.ids("fiumicino-aeroporto"), {TRENITALIA: 830008412})
+        self.assertEqual(stations.search("cortina") + stations.search("courmayeur"), [])
+
     def test_keys_unique_and_abbreviations_present(self):
         es = stations.entries()
         self.assertEqual(len({e["k"] for e in es}), len(es))
