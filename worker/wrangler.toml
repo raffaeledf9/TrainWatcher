@@ -13,6 +13,6 @@ GH_WORKFLOW = "run.yml"
 [[d1_databases]]
 binding = "DB"
 database_name = "trainwatcher"
-database_id = "REPLACED_BY_SETUP"
+database_id = "88754439-00b4-4acc-9f40-d72dcb6dfd89"
 
 # Secrets (wrangler secret put): TELEGRAM_TOKEN, TG_SECRET, GH_TOKEN, WORKER_SECRET, OWNER_CHAT_ID
