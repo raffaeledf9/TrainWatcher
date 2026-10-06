@@ -376,8 +376,8 @@ function sheet() {
       h("b", {id: "rv-title"}, t("review")),
       h("div", {class: "card"}, summary()),
       sendErr && h("div", {class: "err", role: "alert"}, sendErr),
-      h("div", {class: "row"}, h("button", {type: "button", class: "btn ghost", onclick: close}, t("back")),
-        h("button", {type: "button", class: "btn", disabled: busy, onclick: send}, busy ? t("sending") : t("create")))));
+      h("div", {class: "row"}, h("button", {type: "button", class: "btn ghost", onclick: close}, "↩️ " + t("back")),
+        h("button", {type: "button", class: "btn", disabled: busy, onclick: send}, busy ? t("sending") : "➕ " + t("create")))));
 }
 
 function form() {
