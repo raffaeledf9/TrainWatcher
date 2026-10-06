@@ -1,0 +1,18 @@
+name = "trainwatcher"
+main = "src/index.js"
+compatibility_date = "2026-10-01"
+
+# Every minute: 5-minute price-check tick, queue safety net (watchdog added in R8).
+[triggers]
+crons = ["* * * * *"]
+
+[vars]
+GH_REPO = "raffaeledf9/TrainWatcher"
+GH_WORKFLOW = "run.yml"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "trainwatcher"
+database_id = "REPLACED_BY_SETUP"
+
+# Secrets (wrangler secret put): TELEGRAM_TOKEN, TG_SECRET, GH_TOKEN, WORKER_SECRET, OWNER_CHAT_ID
