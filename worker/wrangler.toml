@@ -10,6 +10,10 @@ crons = ["* * * * *"]
 GH_REPO = "raffaeledf9/TrainWatcher"
 GH_WORKFLOW = "run.yml"
 
+# The Mini App form (webapp/index.html + stations.json), same origin as /form.
+[assets]
+directory = "../webapp"
+
 [[d1_databases]]
 binding = "DB"
 database_name = "trainwatcher"

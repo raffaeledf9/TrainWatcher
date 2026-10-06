@@ -31,6 +31,12 @@ S = {
         help="/list — your watches\n/past — finished watches\n/language — 🇮🇹/🇬🇧\nTap 🚄 TrainWatcher to search or create a watch.",
         load_warn="⚠️ You have many watches: checks will be less frequent than usual.",
         stale="⚠️ prices from {t}", invalid="⚠️ That form could not be used: {why}.",
+        fail="⚠️ Price checks for {ops} have failed 3 times in a row. Watches show the last prices that worked; I'll tell you when it's fixed.",
+        recovered="✅ Price checks are working again.", op_ok="✅ Price checks for {ops} are working again.",
+        job_dead="⚠️ No price check has finished for over 30 minutes. I'll tell you when they're back.",
+        worker_dead="⚠️ The Cloudflare Worker hasn't started a price check for over an hour (Worker down or GitHub token expired). Checks go on hourly; buttons and commands may not answer.",
+        weekly="🩺 Weekly check: {w} active watches, {c} checks, {f} failed runs this week.",
+        token="🔑 The GitHub token expires on {d}. Make a new one ({url}) and ask Claude to install it, otherwise checks slow down to once an hour.",
     ),
     IT: dict(
         book_i="🎫 Prenota su Italo", book_t="🎫 Prenota su Trenitalia", hist="📈 Storico", now="🔄 Aggiorna", dele="🗑 Elimina",
@@ -56,6 +62,12 @@ S = {
         help="/list — i tuoi monitoraggi\n/past — monitoraggi conclusi\n/language — 🇮🇹/🇬🇧\nTocca 🚄 TrainWatcher per cercare o creare un monitoraggio.",
         load_warn="⚠️ Hai molti monitoraggi: i controlli saranno meno frequenti del solito.",
         stale="⚠️ prezzi delle {t}", invalid="⚠️ Il modulo non è utilizzabile: {why}.",
+        fail="⚠️ I controlli dei prezzi per {ops} sono falliti 3 volte di fila. I monitoraggi mostrano gli ultimi prezzi validi; ti avviso quando è risolto.",
+        recovered="✅ I controlli dei prezzi funzionano di nuovo.", op_ok="✅ I controlli dei prezzi per {ops} funzionano di nuovo.",
+        job_dead="⚠️ Nessun controllo dei prezzi è terminato da oltre 30 minuti. Ti avviso quando riprendono.",
+        worker_dead="⚠️ Il Worker Cloudflare non avvia controlli da oltre un'ora (Worker fermo o token GitHub scaduto). I controlli continuano ogni ora; pulsanti e comandi potrebbero non rispondere.",
+        weekly="🩺 Controllo settimanale: {w} monitoraggi attivi, {c} controlli, {f} esecuzioni fallite questa settimana.",
+        token="🔑 Il token GitHub scade il {d}. Creane uno nuovo ({url}) e fallo installare a Claude, altrimenti i controlli rallentano a uno all'ora.",
     ),
 }
 

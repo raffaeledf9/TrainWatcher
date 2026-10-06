@@ -1,14 +1,16 @@
 """One Check: fetch the search units of the due Watches (shared, in parallel), record what came back, and build
 each Watch's view (Lowest price, Ties, top 5, round-trip total) from the stored current offers."""
 import dataclasses
+from datetime import timedelta
 
 from trainwatcher import prices, stations, store
-from trainwatcher.offers import EMPTY, OK, Offer, SearchResult
+from trainwatcher.offers import BROKEN, EMPTY, OK, Offer, SearchResult
 from trainwatcher.operators import http, italo, trenitalia
 
 CONCURRENCY = {"T": 5, "I": 3}
 NAME = {"T": "trenitalia", "I": "italo"}
 NA = "NA"  # the operator does not serve one of the stations
+CANARY = ("milano-centrale", "roma-termini")  # always has trains
 
 
 def record_units(watch, i):
@@ -47,9 +49,24 @@ def _call(u, session, ids):
     return session.search(x, y, day, passenger=pax), None
 
 
+def canary(op, session, today):
+    """Decides 'really no trains' vs 'operator broken': a weekday about 5 weeks ahead on a route that always has trains."""
+    day = today + timedelta(days=35)
+    while day.weekday() >= 5:
+        day += timedelta(days=1)
+    a, b = (stations.operator_ids(stations.by_key(k))[NAME[op]] for k in CANARY)
+    try:
+        r = trenitalia.search(a, b, day) if op == "T" else session.search(a, b, day)
+    except Exception:
+        return False
+    return r.status == OK and bool(r.offers)
+
+
 def fetch_and_record(db, units, now, session=None):
-    """Fetch every unit once and store successful results. Returns {fetch_unit: status}."""
-    statuses, session = {}, session or italo.Session(workers=CONCURRENCY["I"])
+    """Fetch every unit once and store successful results. When an operator's results look suspicious (errors, or
+    nothing but EMPTY) the canary decides; if it fails too, EMPTY counts as BROKEN and is not stored.
+    Returns ({fetch_unit: status}, {failing operators})."""
+    statuses, failing, session = {}, set(), session or italo.Session(workers=CONCURRENCY["I"])
     for op in ("T", "I"):
         todo = []
         for u in (u for u in units if u[0] == op):
@@ -70,14 +87,16 @@ def fetch_and_record(db, units, now, session=None):
             return call
 
         results, _ = http.run_parallel([wrap(u, ids) for u, ids in todo], CONCURRENCY[op])
+        if results and (any(r.status not in (OK, EMPTY) for r in results) or all(r.status == EMPTY for r in results))                 and not canary(op, session, now.date()):
+            failing.add(op)
         for (u, _), res in zip(todo, results):
-            statuses[u] = res.status
-            if res.status in (OK, EMPTY):
+            statuses[u] = BROKEN if op in failing and res.status == EMPTY else res.status
+            if statuses[u] in (OK, EMPTY):
                 store.record(db, u, res.offers, now)
                 back = getattr(res, "pair", None)
                 if back is not None and back.status in (OK, EMPTY):
                     store.record(db, (u[0], u[2], u[1], u[3], u[4], u[5]), back.offers, now)
-    return statuses
+    return statuses, failing
 
 
 def live_ok(watch, statuses):

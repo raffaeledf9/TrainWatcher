@@ -2,7 +2,7 @@
 Worker uses for instant replies, save state.
 
 Logs are public (ADR 0002): print counts and timings only, never routes, prices, ids or tokens.
-Env: WORKER_URL, WORKER_SECRET, TELEGRAM_TOKEN, OWNER_CHAT_ID, STATE_DB (default state.db).
+Env: WORKER_URL, WORKER_SECRET, TELEGRAM_TOKEN, OWNER_CHAT_ID, STATE_DB (default state.db), GITHUB_EVENT_NAME (set by Actions).
 """
 import base64
 import json
@@ -10,7 +10,7 @@ import os
 import sys
 import time
 import urllib.request
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from trainwatcher import alerts, check, i18n, model, render, schedule, stations, store
 
@@ -20,6 +20,10 @@ try:
 except Exception:  # no tz database: Italy's winter offset is close enough for display
     ROME = timezone(timedelta(hours=1))
 
+GH_TOKEN_EXPIRES = date(2027, 10, 5)  # the Worker's fine-grained token; update when rotating it
+TOKEN_URL = "https://github.com/settings/personal-access-tokens"
+OP_NAME = {"T": "Trenitalia", "I": "Italo"}
+
 
 # ---------- I/O ----------
 def worker(path, body=None):
@@ -28,6 +32,15 @@ def worker(path, body=None):
                                           "User-Agent": "trainwatcher-job"}, method="POST")
     with urllib.request.urlopen(req, timeout=60) as r:
         return json.load(r)
+
+
+def try_worker(path, body=None):
+    """None when the Worker is unreachable: the job must still check prices and raise the dead-man notice."""
+    try:
+        return worker(path, body)
+    except (OSError, ValueError) as e:
+        print("worker unreachable", path, type(e).__name__)
+        return None
 
 
 def telegram(method, **params):
@@ -87,6 +100,33 @@ def handle(db, item, now, local, forced, searches):
 
 
 # ---------- checks ----------
+def to_local(utc_naive):
+    return utc_naive.replace(tzinfo=timezone.utc).astimezone(ROME).replace(tzinfo=None)
+
+
+def stale_since(db, watch):
+    """While an operator of this watch is failing, status views say since when the prices are."""
+    lasts = [store.meta_get(db, f"last_ok_at:{op}") for op in watch.operators if int(store.meta_get(db, f"fail_runs:{op}", "0"))]
+    lasts = [x for x in lasts if x]
+    return to_local(datetime.fromisoformat(min(lasts))) if lasts else None
+
+
+def op_health(db, now, local, failing, tried):
+    """Per operator searched this run: count consecutive failing runs, tell the Owner at 3 and on recovery."""
+    owner, sent = int(os.environ["OWNER_CHAT_ID"]), 0
+    for op in sorted(tried, reverse=True):
+        before = int(store.meta_get(db, f"fail_runs:{op}", "0"))
+        n = before + 1 if op in failing else 0
+        key = "fail" if n == 3 else "op_ok" if n == 0 and before >= 3 else None
+        if key:
+            send(owner, (i18n.t(lang_of(db, owner), key, ops=OP_NAME[op]), []), local)
+            sent += 1
+        if n == 0:
+            store.meta_set(db, f"last_ok_at:{op}", now.isoformat())
+        store.meta_set(db, f"fail_runs:{op}", n)
+    return sent
+
+
 def check_and_alert(db, now, local, forced, searches):
     due = store.due_watches(db, now)
     due_ids = {w.id for w in due}
@@ -94,16 +134,16 @@ def check_and_alert(db, now, local, forced, searches):
     take, _, deferred = schedule.plan(due, now)
     units = list(dict.fromkeys(u for w in take + searches for u in check.fetch_units(w)))
     t0 = time.time()
-    statuses = check.fetch_and_record(db, units, now) if units else {}
+    statuses, failing = check.fetch_and_record(db, units, now) if units else ({}, set())
     fetch_s = time.time() - t0
-    sent = 0
+    sent = op_health(db, now, local, failing, {u[0] for u, st in statuses.items() if st != check.NA})
     for w in take:
         lang = lang_of(db, w.user_id)
         vs, lowest, legs, total = check.views(w, db)
         ok = check.live_ok(w, statuses)
         events, state = alerts.evaluate(w, getattr(w, "alert_state", {}) or {}, lowest, ok, local.date(), legs=legs)
         if any(e["kind"] == "baseline" for e in events) or w.id in forced:
-            send(w.user_id, render.status(w, vs, local, lang, local.date(), total=total), local, silent=False)
+            send(w.user_id, render.status(w, vs, local, lang, local.date(), total=total, stale_since=stale_since(db, w)), local, silent=False)
             sent += 1
         rest = [e for e in events if e["kind"] != "baseline"]
         if rest:
@@ -117,11 +157,12 @@ def check_and_alert(db, now, local, forced, searches):
         sid = f"{int(now.timestamp())}{i}"
         store.meta_set(db, f"search:{sid}", json.dumps(w.to_json()))
         vs, lowest, legs, total = check.views(w, db)
-        send(w.user_id, render.status(w, vs, local, lang_of(db, w.user_id), local.date(), search=True, total=total, search_id=sid), local, silent=False)
+        send(w.user_id, render.status(w, vs, local, lang_of(db, w.user_id), local.date(), search=True, total=total, search_id=sid,
+                                      stale_since=stale_since(db, w)), local, silent=False)
         sent += 1
     db.commit()
     bad = sum(1 for s in statuses.values() if s not in ("OK", "EMPTY", "NA"))
-    return len(take), len(deferred), len(units), bad, sent, fetch_s
+    return len(take), len(deferred), len(units), bad, sent, fetch_s, failing
 
 
 # ---------- snapshots for the Worker's instant replies ----------
@@ -136,7 +177,7 @@ def snapshots(db, now, local):
             low_offer = vs[0]["ties"][0] if vs[0]["ties"] else None
             at = w.last_check.replace(tzinfo=timezone.utc).astimezone(ROME) if w.last_check else None
             items.append((w, low_offer if not w.round_trip else None, lowest, at))
-            text, kb = render.status(w, vs, at or local, lang, local.date(), total=total)
+            text, kb = render.status(w, vs, at or local, lang, local.date(), total=total, stale_since=stale_since(db, w))
             rows.append({"key": f"{uid}:status:{w.id}", "user_id": uid, "body": json.dumps({"text": text, "kb": kb})})
             q = render.delete_question(n, w, lang)
             rows.append({"key": f"{uid}:delete:{w.id}", "user_id": uid, "body": json.dumps({"text": q[0], "kb": q[1], "n": n})})
@@ -156,10 +197,44 @@ def snapshots(db, now, local):
         rows.append({"key": f"{uid}:lang", "user_id": uid, "body": json.dumps(lang)})
     for lang in (i18n.EN, i18n.IT):
         rows.append({"key": f"strings:{lang}", "user_id": 0, "body": json.dumps({k: i18n.S[lang][k] for k in (
-            "welcome", "lang_q", "lang_set", "ack", "deleted", "kept", "help", "list_empty", "past_empty", "del_yes", "del_no")})})
+            "welcome", "lang_q", "lang_set", "ack", "deleted", "kept", "help", "list_empty", "past_empty", "del_yes", "del_no",
+            "job_dead", "recovered")})})
     for i in range(0, len(rows), 50):
         worker("/job/snapshot", {"rows": rows[i:i + 50]})
     return len(rows)
+
+
+# ---------- running unattended (map ticket 13) ----------
+def health(db, now, local, failing, checked, worker_ok, event):
+    """Owner notices besides op_health: a dead Worker (the job's dead-man switch; the Worker watches the job), the
+    silent Monday self-check, the GitHub token's expiry. Returns notices sent."""
+    owner = int(os.environ["OWNER_CHAT_ID"])
+    lang, notices = lang_of(db, owner), []
+    get, put = (lambda k, d="0": store.meta_get(db, k, d)), (lambda k, v: store.meta_set(db, k, v))
+
+    if event == "workflow_dispatch":
+        put("last_dispatched", now.isoformat())
+    last = get("last_dispatched", "")
+    dead = not worker_ok or (event == "schedule" and bool(last) and now - datetime.fromisoformat(last) > timedelta(hours=1))
+    if dead != (get("worker_dead", "") == "1"):
+        notices.append(i18n.t(lang, "worker_dead" if dead else "recovered"))
+        put("worker_dead", "1" if dead else "")
+
+    put("week_checks", int(get("week_checks")) + checked)
+    put("week_fails", int(get("week_fails")) + bool(failing))
+    week = local.strftime("%G-W%V")
+    if local.weekday() == 0 and local.hour >= 9 and get("weekly_sent", "") != week:
+        send(owner, (i18n.t(lang, "weekly", w=len(store.watches(db)), c=get("week_checks"), f=get("week_fails")), []), local, silent=True)
+        put("weekly_sent", week)
+        put("week_checks", 0)
+        put("week_fails", 0)
+
+    if local.date() >= GH_TOKEN_EXPIRES - timedelta(days=14) and get("token_reminded", "") != GH_TOKEN_EXPIRES.isoformat():
+        notices.append(i18n.t(lang, "token", d=i18n.day(GH_TOKEN_EXPIRES, lang, year=True), url=TOKEN_URL))
+        put("token_reminded", GH_TOKEN_EXPIRES.isoformat())
+    for n in notices:
+        send(owner, (n, []), local)
+    return len(notices)
 
 
 def main():
@@ -169,23 +244,30 @@ def main():
     db = store.connect(os.environ.get("STATE_DB", "state.db"))
     runs = int(store.meta_get(db, "runs", "0")) + 1
     store.meta_set(db, "runs", runs)
-    forced, searches, commands = set(), [], 0
+    forced, searches, commands, worker_ok = set(), [], 0, True
     for _ in range(10):  # drain: commands may keep arriving while we work
-        items = worker("/job/take")
+        items = try_worker("/job/take")
+        if items is None:
+            worker_ok = False
         if not items:
             break
         for it in items:
             handle(db, it, now, local, forced, searches)
         commands += len(items)
-        worker("/job/ack", {"ids": [it["id"] for it in items]})
+        if try_worker("/job/ack", {"ids": [it["id"] for it in items]}) is None:
+            worker_ok = False
+            break
     for w in store.watches(db):
         if schedule.is_past(w, local.date()):
             store.set_status(db, w.id, "past")
-    checked, deferred, units, bad, sent, fetch_s = check_and_alert(db, now, local, forced, searches)
-    snaps = snapshots(db, now, local)
-    worker("/job/done", {"bad_units": bad})
+    checked, deferred, units, bad, sent, fetch_s, failing = check_and_alert(db, now, local, forced, searches)
+    notices = health(db, now, local, failing, checked, worker_ok, os.environ.get("GITHUB_EVENT_NAME", ""))
+    snaps = snapshots(db, now, local) if worker_ok else 0
+    if worker_ok:
+        try_worker("/job/done", {"bad_units": bad})
     print(f"run #{runs}: commands={commands} watches_checked={checked} deferred={deferred} units={units} failed_units={bad} "
-          f"messages={sent} snapshots={snaps} fetch={fetch_s:.1f}s total={time.time() - t0:.1f}s")
+          f"failing_ops={len(failing)} worker_ok={worker_ok} messages={sent} notices={notices} snapshots={snaps} "
+          f"fetch={fetch_s:.1f}s total={time.time() - t0:.1f}s")
     return 0
 
 
