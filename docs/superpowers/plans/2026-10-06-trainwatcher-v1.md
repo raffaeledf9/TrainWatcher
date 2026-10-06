@@ -158,7 +158,9 @@ Tickets: Telling 'no trains' from 'API broken'; Setup flow; Run budget.
 - Dead-man switches: the Worker watches the job, and the job watches the Worker.
 - GitHub token expiry reminder (14 days before).
 - `ci.yml`: tests + secret scan on every push; README with CC-BY attribution for the GTFS-derived data.
-- Delete `.env` after confirming all secrets are uploaded (the Owner keeps tokens only in the platforms).
+- ✅ Trim `.env` after confirming all secrets are uploaded: tokens live only in the platforms; `.env` keeps `STATE_KEY` and
+  `OWNER_CHAT_ID` (Owner decision 2026-10-07: a re-setup without the old `STATE_KEY` would leave the saved watches unreadable).
+  Rotation: put the new tokens in `.env`, run `bash scripts/setup.sh`, remove them again.
 - **Checks:** simulated operator failure → notice; simulated Worker silence → job notice; CI green.
 
 ## R9 — Owner acceptance on the phone (batched, ~20 min)
