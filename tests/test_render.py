@@ -1,4 +1,5 @@
 """R6 messages: the approved layouts, in both languages."""
+import dataclasses
 import importlib.util
 import unittest
 from datetime import date, datetime
@@ -20,7 +21,8 @@ def watch(**kw):
 
 
 def o(p, dep, op=ITALO, n="9967", fare="eXtra Magic", cls="Smart", seats=None, cat=None):
-    return Offer(op, n, cat or ("IT" if op == ITALO else "FR"), "2026-11-10T" + dep, "2026-11-10T" + dep[:2] + ":59", "a", "b", cls, fare, p, seats)
+    origin, dest = ("MC_", "RMT") if op == ITALO else ("Milano Centrale", "Roma Termini")  # as the operators return them
+    return Offer(op, n, cat or ("IT" if op == ITALO else "FR"), "2026-11-10T" + dep, "2026-11-10T" + dep[:2] + ":59", origin, dest, cls, fare, p, seats)
 
 
 OFFERS = [o(29.9, "06:15", seats=8), o(29.9, "10:40", n="9971"), o(37.9, "07:00", TRENITALIA, "9607", "FrecciaDAYS", "Standard"),
@@ -36,7 +38,8 @@ class StatusView(unittest.TestCase):
     def test_style_a_english(self):
         text, kb = render.status(watch(max=25), [view(OFFERS)], AT, "en", TODAY)
         for part in ("🚄 <b>Milano (all) → Roma Termini</b>", "📅 Tue 10 Nov · 👤 Adult · 💶 Cheapest fare", "<b>€29.90</b> lowest · 2 trains",
-                     "• 06:15→06:59 <b>Italo 9967</b> · Smart · eXtra Magic · 8 left", "<i>Next cheapest</i>", "• €37.90 07:00 FR 9607 · FrecciaDAYS",
+                     "• 06:15 Centrale → 06:59 <b>Italo 9967</b> · Smart · eXtra Magic · 8 left", "<i>Next cheapest</i>",
+                     "• €37.90 07:00 Centrale FR 9607 · FrecciaDAYS",
                      "⚠️ Lowest is above your max <b>€25.00</b>", "🔄 last check 14:05"):
             self.assertIn(part, text)
         self.assertEqual([b["text"] for b in kb[0]], ["🎫 Book on Italo", "🎫 Book on Trenitalia"])
@@ -99,6 +102,30 @@ class ListAndLabels(unittest.TestCase):
         self.assertEqual(render.days_label(mk(["2026-11-28", "2026-12-03"]), "en", TODAY), "28 Nov – 3 Dec")
         self.assertEqual(render.days_label(mk(["2026-11"]), "it", TODAY), "nov 2026")
         self.assertEqual(render.days_label(mk(["2027-01-10"]), "en", TODAY), "Sun 10 Jan '27")
+
+
+class CityGroups(unittest.TestCase):
+    def test_station_shown_only_at_group_ends(self):
+        rg = dataclasses.replace(o(29.9, "06:25"), origin="RG_")
+        leg = watch().legs[0]
+        self.assertEqual(render.times(rg, leg), "06:25 Rogoredo → 06:59")
+        self.assertEqual(render.departs(rg, leg), "06:25 Rogoredo")
+        single = watch(**{"from": "napoli-centrale"}).legs[0]
+        self.assertEqual(render.times(o(29.9, "06:15"), single), "06:15→06:59")
+        back = watch(ret={"d": ["2026-11-12"], "w": None}).legs[1]  # Roma Termini → Milano (all)
+        self.assertEqual(render.times(dataclasses.replace(o(29.9, "18:00"), origin="RMT", destination="RG_"), back), "18:00 → 18:59 Rogoredo")
+
+    def test_trenitalia_names_lose_the_city(self):
+        self.assertEqual(render.stop("Milano Porta Garibaldi", "milano-tutte"), "Porta Garibaldi")
+        self.assertEqual(render.stop("Roma Termini", "roma-termini"), None)
+
+
+class ChartLines(unittest.TestCase):
+    def test_overlap(self):
+        from trainwatcher.charts import _overlap
+        a = [("2026-10-01T10:00", 34.9), ("2026-10-02T10:00", 29.9)]
+        self.assertTrue(_overlap(a, [("2026-10-01T10:00", 39.9), ("2026-10-02T12:00", 29.9)]))
+        self.assertFalse(_overlap(a, [("2026-10-01T10:00", 39.9), ("2026-10-02T12:00", 31.9)]))
 
 
 @unittest.skipUnless(importlib.util.find_spec("matplotlib"), "matplotlib not installed")

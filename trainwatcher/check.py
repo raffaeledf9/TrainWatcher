@@ -3,7 +3,7 @@ each Watch's view (Lowest price, Ties, top 5, round-trip total) from the stored 
 import dataclasses
 from datetime import timedelta
 
-from trainwatcher import prices, stations, store
+from trainwatcher import prices, render, stations, store
 from trainwatcher.offers import BROKEN, EMPTY, OK, Offer, SearchResult
 from trainwatcher.operators import http, italo, trenitalia
 
@@ -133,7 +133,9 @@ def chart_series(watch, db, views_, top=5):
                 k = store.offer_key(u, o)
                 h = store.history(db, [k])[k]
                 if h:
-                    label = ("IT " if o.operator == "italo" else o.category + " ") + f"{o.train}  {o.dep[11:16]} → {o.arr[11:16]}"
+                    label = render.short_train(o) + "  " + render.times(o, watch.legs[i], arrow=" → ", html=False)
+                    if len(views_) > 1:
+                        label = ("→ " if i == 0 else "← ") + label
                     series.append((label, h))
                     break
     return series[:top * len(views_)]

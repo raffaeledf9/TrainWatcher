@@ -45,3 +45,8 @@ def operator_ids(entry):
 
 def abbreviation(entry):
     return entry["a"]
+
+
+def display_name(raw):
+    """Name of a station as an operator returns it in results: Italo gives codes (MC_), Trenitalia names."""
+    return next((e["n"] for e in entries() if e.get("i") == raw and not e.get("g")), raw)

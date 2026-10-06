@@ -55,10 +55,35 @@ def short_train(o):
     return ("IT " if o.operator == ITALO else o.category + " ") + o.train
 
 
-def train_line(o, lang, with_day):
+def stop(raw, key):
+    """The station a train uses where the leg has a city group, without the city ('Milano Rogoredo' → 'Rogoredo');
+    None where the leg has a single station."""
+    e = stations.by_key(key)
+    if not e.get("g"):
+        return None
+    name, city = stations.display_name(raw), e["n"].split(" (")[0]
+    return (name[len(city):].strip() if name.lower().startswith(city.lower() + " ") else "") or name
+
+
+def times(o, leg=None, arrow="→", html=True):
+    """'06:15→09:24', or '06:25 Rogoredo → 09:24' when the leg starts or ends at a city group."""
+    a, b = (stop(o.origin, leg.origin), stop(o.destination, leg.destination)) if leg else (None, None)
+    if not (a or b):
+        return f"{o.dep[11:16]}{arrow}{o.arr[11:16]}"
+    f = escape if html else str
+    return f"{o.dep[11:16]}{' ' + f(a) if a else ''} → {o.arr[11:16]}{' ' + f(b) if b else ''}"
+
+
+def departs(o, leg):
+    """Departure time for one-line lists, with the stations used at city-group ends ('06:25 Rogoredo', '06:15 → Tiburtina')."""
+    a, b = stop(o.origin, leg.origin), stop(o.destination, leg.destination)
+    return o.dep[11:16] + (f" {escape(a)}" if a else "") + (f" → {escape(b)}" if b else "")
+
+
+def train_line(o, lang, with_day, leg=None):
     d = (day(date.fromisoformat(o.dep[:10]), lang) + " ") if with_day else ""
     seats = f" · {o.seats} {t(lang, 'left')}" if o.seats else ""
-    return f"• {d}{o.dep[11:16]}→{o.arr[11:16]} <b>{OPS.get(o.category, o.category)} {o.train}</b> · {o.cls} · {escape(o.fare)}{seats}"
+    return f"• {d}{times(o, leg)} <b>{OPS.get(o.category, o.category)} {o.train}</b> · {o.cls} · {escape(o.fare)}{seats}"
 
 
 def italo_url(leg, d, passenger):
@@ -106,10 +131,10 @@ def _leg_block(view, leg, lang):
             lines.append(f"ℹ️ {t(lang, 'other_fare')}: {price(o.price, lang)} {escape(o.fare)}")
         return lines
     lines.append(f"<b>{price(view['low'], lang)}</b> {t(lang, 'lowest')} · {len(view['ties'])} {t(lang, 'trains')}")
-    lines += [train_line(o, lang, multi) for o in view["ties"]]
+    lines += [train_line(o, lang, multi, leg) for o in view["ties"]]
     if view["others"]:
         lines += ["", f"<i>{t(lang, 'next_')}</i>"]
-        lines += [f"• {price(o.price, lang)} {(day(date.fromisoformat(o.dep[:10]), lang) + ' ') if multi else ''}{o.dep[11:16]} {short_train(o)} · {escape(o.fare)}"
+        lines += [f"• {price(o.price, lang)} {(day(date.fromisoformat(o.dep[:10]), lang) + ' ') if multi else ''}{departs(o, leg)} {short_train(o)} · {escape(o.fare)}"
                   for o in view["others"]]
     return lines
 
@@ -150,7 +175,7 @@ TITLES = {"drop": ("📉", "down"), "rise": ("📈", "up"), "under_max": ("✅",
 def alert(watch, events, views, checked_at, lang, today=None):
     """One message for all events of one Watch in one Run (baseline events are sent as the status view)."""
     sections, trains = [], []
-    ties = [o for v in views for o in v.get("ties", [])]
+    ties = [(o, leg) for v, leg in zip(views, watch.legs) for o in v.get("ties", [])]
     for e in events:
         if e["kind"] == "gone":
             sections.append([f"🚫 <b>{escape(fare_label(watch, lang))} {t(lang, 'gone')}</b>", f"{route(watch, lang)} · {watch_days(watch, lang, today)}", "",
@@ -163,14 +188,14 @@ def alert(watch, events, views, checked_at, lang, today=None):
         icon, key = TITLES[e["kind"]]
         lines = [f"{icon} <b>{t(lang, key)}</b> · {escape(fare_label(watch, lang))}", f"{route(watch, lang)} · {watch_days(watch, lang, today)}", ""]
         multi = any(len(l.dates()) > 1 for l in watch.legs)
-        for o in ties:
+        for o, leg in ties:
             old = f" <s>{price(e['prev'], lang)}</s>" if e["kind"] in ("drop", "rise") and e.get("prev") is not None else ""
             d = (day(date.fromisoformat(o.dep[:10]), lang) + " ") if multi else ""
-            lines.append(f"<b>{price(o.price, lang)}</b>{old} — {OPS.get(o.category, o.category)} {o.train} {d}{o.dep[11:16]}→{o.arr[11:16]} · {o.cls}")
+            lines.append(f"<b>{price(o.price, lang)}</b>{old} — {OPS.get(o.category, o.category)} {o.train} {d}{times(o, leg)} · {o.cls}")
         lines.append("")
         lines += _notes(watch, e, lang)
         sections.append(lines)
-        trains += ties
+        trains += [o for o, _ in ties]
     seen, row = set(), []
     for o in trains:
         if (o.train, o.dep) not in seen:
@@ -214,7 +239,7 @@ def _round_trip_alert(watch, e, views, lang, today):
         label = t(lang, ("out_ch" if i == 0 else "ret_ch") if changed else ("out" if i == 0 else "ret"))
         old = f" <s>{price(prev[k], lang)}</s>" if changed else ""
         same = "" if changed else f" ({t(lang, 'unchanged')})"
-        lines.append(f"{'→' if i == 0 else '←'} {label}: <b>{price(o.price, lang)}</b>{old} — {OPS.get(o.category, o.category)} {o.train} {o.dep[11:16]}→{o.arr[11:16]}{same}")
+        lines.append(f"{'→' if i == 0 else '←'} {label}: <b>{price(o.price, lang)}</b>{old} — {OPS.get(o.category, o.category)} {o.train} {times(o, watch.legs[i])}{same}")
     lines.append("")
     if "max" in e:
         m = price(e["max"], lang)
