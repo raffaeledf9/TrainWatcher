@@ -2,7 +2,7 @@ name = "trainwatcher"
 main = "src/index.js"
 compatibility_date = "2026-10-01"
 
-# Every minute: 5-minute price-check tick, queue safety net (watchdog added in R8).
+# Every minute: start a run for queued commands, or (every 5 min) when a watch is due; dead-man switch for the job.
 [triggers]
 crons = ["* * * * *"]
 

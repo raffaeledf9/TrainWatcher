@@ -2,10 +2,10 @@
 3 failing runs and the recovery, a dead Worker, the Monday self-check and the token expiry."""
 import os
 import unittest
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from unittest import mock
 
-from trainwatcher import check, run, store
+from trainwatcher import check, model, run, store
 from trainwatcher.offers import BROKEN, EMPTY, OK, Offer, SearchResult
 from trainwatcher.operators import trenitalia
 
@@ -65,16 +65,23 @@ class Notices(unittest.TestCase):
         self.assertEqual(run.stale_since(self.db, w), run.to_local(NOW))
 
     def test_dead_worker_once_then_recovered(self):
-        h = lambda event, ok=True, now=NOW: run.health(self.db, now, NOW, set(), 0, ok, event)
-        h("workflow_dispatch")
+        h = lambda event, ok=True, overdue=False: run.health(self.db, NOW, NOW, set(), 0, ok, event, overdue)
+        h("schedule")                     # idle bot: hourly fallback runs, nothing due, all fine
+        h("schedule", ok=False)           # Worker unreachable
         h("schedule", ok=False)
-        h("schedule", ok=False)
+        h("workflow_dispatch")            # the Worker started a run again
+        h("schedule", overdue=True)       # a watch long overdue: the Worker stopped starting runs
+        h("schedule")                     # nothing overdue in a fallback run doesn't prove it's back
         h("workflow_dispatch")
-        h("schedule", now=NOW + timedelta(hours=2))  # only hourly fallback runs: the Worker stopped dispatching
-        self.assertEqual(len(self.sent), 3)
+        self.assertEqual(["down" if t.startswith("⚠️") else "back" for t in self.texts()], ["down", "back", "down", "back"])
         self.assertIn("Cloudflare", self.sent[0][0])
-        self.assertIn("working again", self.sent[1][0])
-        self.assertIn("Cloudflare", self.sent[2][0])
+
+    def test_next_due(self):
+        self.assertIsNone(run.next_due(self.db))  # no watches: the Worker starts no runs
+        w = model.from_payload({"v": 1, "from": "milano-tutte", "to": "roma-termini", "out": {"d": ["2026-11-10"], "w": None}},
+                               7, {"milano-tutte", "roma-termini"}, date(2026, 10, 6))
+        store.add_watch(self.db, w, NOW)          # a new watch is due at once
+        self.assertEqual(run.next_due(self.db), int(NOW.replace(tzinfo=timezone.utc).timestamp() * 1000))
 
     def test_monday_self_check_is_silent_and_weekly(self):
         monday = datetime(2026, 10, 12, 9, 5)

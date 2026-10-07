@@ -7,7 +7,8 @@ const MIN = 60_000;
 const FALLBACK = { ack: "⏳ Got it — checking prices, results in about a minute.", list_empty: "No watches yet.", past_empty: "No past watches yet.",
   welcome: "Welcome to TrainWatcher 👋", lang_q: "Choose your language:", help: "/list · /past · /language", deleted: "🗑 Watch {n} deleted.",
   kept: "↩️ Watch {n} kept.", del_yes: "✅ Delete", del_no: "↩️ Keep", lang_set: "OK",
-  job_dead: "⚠️ No price check has finished for over 30 minutes.", recovered: "✅ Price checks are working again." };
+  job_dead: "⚠️ Price checks have stopped finishing.", recovered: "✅ Price checks are working again.",
+  dispatch_fail: "⚠️ GitHub refused to start a price check: the GitHub token has probably expired." };
 
 export default {
   async fetch(req, env, ctx) {
@@ -27,8 +28,9 @@ export default {
   async scheduled(event, env, ctx) {
     const minute = new Date(event.scheduledTime).getUTCMinutes();
     const pending = await env.DB.prepare("SELECT COUNT(*) AS n FROM queue WHERE taken_at IS NULL").first("n");
-    if (minute % 5 === 0) await dispatch(env, "tick");
-    else if (pending > 0) await dispatch(env, "queue");
+    const due = await snap(env, "next_due"); // earliest next check of any watch (ms), published by the job; null = none
+    if (pending > 0) await dispatch(env, "queue");
+    else if (minute % 5 === 0 && due && Date.now() >= due) await dispatch(env, "due"); // no watch due: no run
     await watchJob(env);
   },
 };
@@ -204,25 +206,36 @@ async function jobApi(req, env, path) {
     return Response.json({ ok: true });
   }
   if (path === "/job/done" && req.method === "POST") {
-    await env.DB.prepare("INSERT INTO meta (k, v) VALUES ('last_run_ok', ?1) ON CONFLICT(k) DO UPDATE SET v = ?1").bind(String(Date.now())).run();
+    await env.DB.batch([
+      env.DB.prepare("INSERT INTO meta (k, v) VALUES ('last_run_ok', ?1) ON CONFLICT(k) DO UPDATE SET v = ?1").bind(String(Date.now())),
+      env.DB.prepare("DELETE FROM meta WHERE k = 'pending_since'")]);
     return Response.json({ ok: true });
   }
   return new Response("not found", { status: 404 });
 }
 
-// Dead-man switch (map ticket 13): tell the Owner when no run has finished for 30 minutes, and when runs are back.
+// Dead-man switch (map ticket 13): tell the Owner when runs stop finishing, and when they are back. Runs start only
+// when there is work, so silence alone is normal: alarm when a run this Worker started hasn't finished within
+// 30 minutes, or when nothing (not even GitHub's hourly fallback run) has finished for 3 hours.
 // The job watches this Worker in turn (run.py health).
+function jobDead(m, now) {
+  if (!m.last_run_ok) return false;
+  return Boolean(m.pending_since && now - Number(m.pending_since) > 30 * MIN) || now - Number(m.last_run_ok) > 180 * MIN;
+}
+
 async function watchJob(env) {
-  const { results } = await env.DB.prepare("SELECT k, v FROM meta WHERE k IN ('last_run_ok', 'job_dead')").all();
-  const m = Object.fromEntries(results.map((r) => [r.k, r.v]));
-  if (!m.last_run_ok) return;
-  const dead = Date.now() - Number(m.last_run_ok) > 30 * MIN;
-  if (dead === (m.job_dead === "1")) return;
+  const { results } = await env.DB.prepare("SELECT k, v FROM meta WHERE k IN ('last_run_ok', 'pending_since')").all();
+  await notifyOnChange(env, "job_dead", jobDead(Object.fromEntries(results.map((r) => [r.k, r.v])), Date.now()));
+}
+
+// One Owner notice when a problem starts (S[key]) and one when it ends; quiet at night like the alerts.
+async function notifyOnChange(env, key, bad) {
+  if (bad === ((await env.DB.prepare("SELECT v FROM meta WHERE k = ?1").bind(key).first("v")) === "1")) return;
   const uid = env.OWNER_CHAT_ID, lang = (await snap(env, `${uid}:lang`)) || "en";
   const S = { ...FALLBACK, ...((await snap(env, `strings:${lang}`)) || {}) };
   const h = Number(new Intl.DateTimeFormat("en", { hour: "numeric", hourCycle: "h23", timeZone: "Europe/Rome" }).format(new Date()));
-  if (await tg(env, "sendMessage", { chat_id: uid, text: dead ? S.job_dead : S.recovered, disable_notification: h >= 23 || h < 7 }))
-    await env.DB.prepare("INSERT INTO meta (k, v) VALUES ('job_dead', ?1) ON CONFLICT(k) DO UPDATE SET v = ?1").bind(dead ? "1" : "").run();
+  if (await tg(env, "sendMessage", { chat_id: uid, text: bad ? S[key] : S.recovered, disable_notification: h >= 23 || h < 7 }))
+    await env.DB.prepare("INSERT INTO meta (k, v) VALUES (?1, ?2) ON CONFLICT(k) DO UPDATE SET v = ?2").bind(key, bad ? "1" : "").run();
 }
 
 // ---------- GitHub dispatch ----------
@@ -234,7 +247,10 @@ async function dispatch(env, reason) {
     if (r.ok && (await r.json()).total_count > 0) return false; // a run is already coming; it drains the queue
   }
   const r = await fetch(`${base}/dispatches`, { method: "POST", headers, body: JSON.stringify({ ref: "main", inputs: { reason } }) });
-  if (!r.ok) console.log("dispatch failed", r.status);
+  if (r.ok) await env.DB.prepare("INSERT INTO meta (k, v) VALUES ('pending_since', ?1) ON CONFLICT(k) DO NOTHING").bind(String(Date.now())).run();
+  else console.log("dispatch failed", r.status);
+  // 401/403/404: the token expired or lost access to the repo; other errors are GitHub hiccups, retried next minute
+  if (r.ok || [401, 403, 404].includes(r.status)) await notifyOnChange(env, "dispatch_fail", !r.ok);
   return r.ok;
 }
 

@@ -198,27 +198,37 @@ def snapshots(db, now, local):
     for lang in (i18n.EN, i18n.IT):
         rows.append({"key": f"strings:{lang}", "user_id": 0, "body": json.dumps({k: i18n.S[lang][k] for k in (
             "welcome", "lang_q", "lang_set", "ack", "deleted", "kept", "help", "list_empty", "past_empty", "del_yes", "del_no",
-            "job_dead", "recovered")})})
+            "job_dead", "recovered", "dispatch_fail")})})
+    rows.append({"key": "next_due", "user_id": 0, "body": json.dumps(next_due(db))})  # the Worker starts the next run then
     for i in range(0, len(rows), 50):
         worker("/job/snapshot", {"rows": rows[i:i + 50]})
     return len(rows)
 
 
 # ---------- running unattended (map ticket 13) ----------
-def health(db, now, local, failing, checked, worker_ok, event):
+def next_due(db):
+    """When the Worker should start the next run for a watch (epoch ms), None with no active watches."""
+    m = db.execute("SELECT MIN(next_check) AS m FROM watches WHERE status = 'active'").fetchone()["m"]
+    return int(datetime.fromisoformat(m).replace(tzinfo=timezone.utc).timestamp() * 1000) if m else None
+
+
+def health(db, now, local, failing, checked, worker_ok, event, overdue=False):
     """Owner notices besides op_health: a dead Worker (the job's dead-man switch; the Worker watches the job), the
-    silent Monday self-check, the GitHub token's expiry. Returns notices sent."""
+    silent Monday self-check, the GitHub token's expiry. overdue: a watch was due over 30 min before this run.
+    Returns notices sent."""
     owner = int(os.environ["OWNER_CHAT_ID"])
     lang, notices = lang_of(db, owner), []
     get, put = (lambda k, d="0": store.meta_get(db, k, d)), (lambda k, v: store.meta_set(db, k, v))
 
-    if event == "workflow_dispatch":
-        put("last_dispatched", now.isoformat())
-    last = get("last_dispatched", "")
-    dead = not worker_ok or (event == "schedule" and bool(last) and now - datetime.fromisoformat(last) > timedelta(hours=1))
-    if dead != (get("worker_dead", "") == "1"):
-        notices.append(i18n.t(lang, "worker_dead" if dead else "recovered"))
-        put("worker_dead", "1" if dead else "")
+    # The Worker starts a run whenever a watch is due, so the hourly fallback run finding one long overdue means it
+    # didn't. Only a run the Worker started proves it works again (fallback runs alone would flap the notice).
+    flagged = get("worker_dead", "") == "1"
+    if not flagged and (not worker_ok or (event == "schedule" and overdue)):
+        notices.append(i18n.t(lang, "worker_dead"))
+        put("worker_dead", "1")
+    elif flagged and worker_ok and event == "workflow_dispatch":
+        notices.append(i18n.t(lang, "recovered"))
+        put("worker_dead", "")
 
     put("week_checks", int(get("week_checks")) + checked)
     put("week_fails", int(get("week_fails")) + bool(failing))
@@ -260,8 +270,9 @@ def main():
     for w in store.watches(db):
         if schedule.is_past(w, local.date()):
             store.set_status(db, w.id, "past")
+    overdue = bool(store.due_watches(db, now - timedelta(minutes=30)))
     checked, deferred, units, bad, sent, fetch_s, failing = check_and_alert(db, now, local, forced, searches)
-    notices = health(db, now, local, failing, checked, worker_ok, os.environ.get("GITHUB_EVENT_NAME", ""))
+    notices = health(db, now, local, failing, checked, worker_ok, os.environ.get("GITHUB_EVENT_NAME", ""), overdue)
     snaps = snapshots(db, now, local) if worker_ok else 0  # the workflow tells the Worker "done" once state is saved
     print(f"run #{runs}: commands={commands} watches_checked={checked} deferred={deferred} units={units} failed_units={bad} "
           f"failing_ops={len(failing)} worker_ok={worker_ok} messages={sent} notices={notices} snapshots={snaps} "
