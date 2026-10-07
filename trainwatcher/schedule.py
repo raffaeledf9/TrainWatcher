@@ -19,34 +19,26 @@ def cadence_minutes(first_day, today):
     return 360
 
 
-def next_check(watch, now):
-    return now + timedelta(minutes=cadence_minutes(watch.first_day, now.date()))
+def next_check(watch, now, today=None):
+    today = today or now.date()
+    return now + timedelta(minutes=cadence_minutes(watch.next_day(today), today))
 
 
-def units(watch):
-    """Search units a Check needs: (operator, origin, destination, day, passenger, return_day_or_None).
-    Same-day round trips are one round-trip unit per operator; other legs are one unit per day."""
-    out = []
-    for op in watch.operators:
-        pax = watch.passenger if op == "I" else "adult"  # Trenitalia shows young/senior fares in the adult search
-        if watch.same_day:
-            d = watch.legs[0].dates()[0]
-            out.append((op, watch.legs[0].origin, watch.legs[0].destination, d, pax, d))
-            continue
-        for leg in watch.legs:
-            for d in leg.dates():
-                out.append((op, leg.origin, leg.destination, d, pax, None))
-    return out
+def units(watch, since=None):
+    """Search units a Check needs (the same ones check.fetch_units fetches)."""
+    from trainwatcher.check import fetch_units
+    return fetch_units(watch, since)
 
 
-def plan(due_watches, now, budget_s=RUN_FETCH_BUDGET_S):
+def plan(due_watches, now, budget_s=RUN_FETCH_BUDGET_S, today=None):
     """Order due watches (nearest departure first, then the longest-unchecked; a watch skipped last run goes
     first) and take them while the estimated cost fits the budget. Units shared by several watches are
     fetched once. Returns (watches_to_check, units_to_fetch, deferred_watches)."""
-    order = sorted(due_watches, key=lambda w: (not getattr(w, "skipped", False), w.first_day, getattr(w, "last_check", None) or datetime.min))
+    today = today or now.date()
+    order = sorted(due_watches, key=lambda w: (not getattr(w, "skipped", False), w.next_day(today), getattr(w, "last_check", None) or datetime.min))
     take, fetch, deferred, spent = [], {}, [], 0.0
     for w in order:
-        new = [u for u in units(w) if u not in fetch]
+        new = [u for u in units(w, today) if u not in fetch]
         cost = sum(COST_S[u[0]] for u in new) / 5  # ~5 units in flight at once
         if take and spent + cost > budget_s:
             deferred.append(w)
@@ -62,8 +54,8 @@ def load(active_watches, today):
     """Estimated share of fetch capacity used per hour (0..1+). Above WARN_LOAD the bot warns the Owner."""
     per_hour = 0.0
     for w in active_watches:
-        cost = sum(COST_S[u[0]] for u in units(w)) / 5
-        per_hour += cost * 60 / cadence_minutes(w.first_day, today)
+        cost = sum(COST_S[u[0]] for u in units(w, today)) / 5
+        per_hour += cost * 60 / cadence_minutes(w.next_day(today), today)
     return per_hour / CAPACITY_S_PER_HOUR
 
 

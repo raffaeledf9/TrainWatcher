@@ -46,12 +46,24 @@ def try_worker(path, body=None):
 def telegram(method, **params):
     req = urllib.request.Request(f"https://api.telegram.org/bot{os.environ['TELEGRAM_TOKEN']}/{method}",
                                  data=json.dumps(params).encode(), headers={"Content-Type": "application/json"})
-    try:
-        with urllib.request.urlopen(req, timeout=30) as r:
-            return json.load(r)
-    except urllib.error.HTTPError as e:
-        print("telegram error", method, e.code)
-        return {}
+    for attempt in range(3):
+        try:
+            with urllib.request.urlopen(req, timeout=30) as r:
+                return json.load(r)
+        except urllib.error.HTTPError as e:
+            with e:
+                if e.code != 429 or attempt == 2:  # 429: too many messages at once; Telegram says how long to wait
+                    print("telegram error", method, e.code)
+                    return {}
+                try:
+                    wait = json.load(e).get("parameters", {}).get("retry_after", 5)
+                except ValueError:
+                    wait = 5
+            time.sleep(min(wait, 30) + 1)
+        except OSError as e:
+            print("telegram error", method, type(e).__name__)
+            return {}
+    return {}
 
 
 def send(user_id, text_kb, now_local, silent=None):
@@ -86,13 +98,15 @@ def handle(db, item, now, local, forced, searches):
                 send(uid, (i18n.t(lang, "load_warn"), []), local, silent=False)
     elif kind == "callback":
         act, _, arg = p.get("data", "").partition(":")
-        if act == "nw" and arg.isdigit():
+        own = arg.isdigit() and (w := store.get_watch(db, int(arg))) is not None and w.user_id == uid and w.status == "active"
+        if act == "nw" and own:
             forced.add(int(arg))
-        elif act == "dy" and arg.isdigit():
+        elif act == "dy" and own:
             store.set_status(db, int(arg), "past")
         elif act == "wt":
             spec = store.meta_get(db, f"search:{arg}")
-            if spec:
+            if spec and json.loads(spec)["user_id"] == uid:
+                db.execute("DELETE FROM meta WHERE k = ?", (f"search:{arg}",))  # a second tap creates nothing
                 w = model.Watch.from_json(json.loads(spec))
                 w.id = store.add_watch(db, w, now)
                 forced.add(w.id)
@@ -127,38 +141,49 @@ def op_health(db, now, local, failing, tried):
     return sent
 
 
+def unanswered(watch, statuses, today):
+    """Operators whose search for this watch failed in this run (its status view says so instead of 'no trains')."""
+    return sorted({OP_NAME[u[0]] for u in check.fetch_units(watch, today) if statuses.get(u) not in (None, "OK", "EMPTY", "NA")})
+
+
 def check_and_alert(db, now, local, forced, searches):
+    today = local.date()
+    tomorrow = today + timedelta(days=1)
     due = store.due_watches(db, now)
     due_ids = {w.id for w in due}
     due += [store.get_watch(db, i) for i in forced if i not in due_ids and store.get_watch(db, i)]
-    take, _, deferred = schedule.plan(due, now)
-    units = list(dict.fromkeys(u for w in take + searches for u in check.fetch_units(w)))
+    take, _, deferred = schedule.plan(due, now, today=today)
+    units = list(dict.fromkeys(u for w in take + searches for u in check.fetch_units(w, today)))
     t0 = time.time()
     statuses, failing = check.fetch_and_record(db, units, now) if units else ({}, set())
     fetch_s = time.time() - t0
     sent = op_health(db, now, local, failing, {u[0] for u, st in statuses.items() if st != check.NA})
     for w in take:
         lang = lang_of(db, w.user_id)
-        vs, lowest, legs, total = check.views(w, db)
-        ok = check.live_ok(w, statuses)
-        events, state = alerts.evaluate(w, getattr(w, "alert_state", {}) or {}, lowest, ok, local.date(), legs=legs)
+        vs, _, _, total = check.views(w, db, since=today)  # the status view still lists today's remaining trains
+        events, state = [], getattr(w, "alert_state", {}) or {}
+        if w.alertable(today):                             # alerts only for days that haven't started
+            va, lowest, legs, _ = check.views(w, db, since=tomorrow)
+            low_day = date.fromisoformat(va[0]["ties"][0].dep[:10]) if va[0]["ties"] else None
+            events, state = alerts.evaluate(w, state, lowest, check.live_ok(w, statuses, tomorrow), today, legs=legs, low_day=low_day)
         if any(e["kind"] == "baseline" for e in events) or w.id in forced:
-            send(w.user_id, render.status(w, vs, local, lang, local.date(), total=total, stale_since=stale_since(db, w)), local, silent=False)
+            send(w.user_id, render.status(w, vs, local, lang, today, total=total, stale_since=stale_since(db, w),
+                                          failed=unanswered(w, statuses, today)), local, silent=False)
             sent += 1
         rest = [e for e in events if e["kind"] != "baseline"]
         if rest:
-            send(w.user_id, render.alert(w, rest, vs, local, lang, local.date()), local)
+            send(w.user_id, render.alert(w, rest, va, local, lang, today), local)
             sent += 1
-        store.mark_checked(db, w, now, schedule.next_check(w, now), state)
+        store.mark_checked(db, w, now, schedule.next_check(w, now, today), state)
     for w in deferred:
         store.mark_skipped(db, w)
     for i, w in enumerate(searches):
         w.id = None
         sid = f"{int(now.timestamp())}{i}"
         store.meta_set(db, f"search:{sid}", json.dumps(w.to_json()))
-        vs, lowest, legs, total = check.views(w, db)
-        send(w.user_id, render.status(w, vs, local, lang_of(db, w.user_id), local.date(), search=True, total=total, search_id=sid,
-                                      stale_since=stale_since(db, w)), local, silent=False)
+        vs, lowest, legs, total = check.views(w, db, since=today)
+        send(w.user_id, render.status(w, vs, local, lang_of(db, w.user_id), today, search=True, total=total, search_id=sid,
+                                      stale_since=stale_since(db, w), failed=unanswered(w, statuses, today)), local, silent=False)
         sent += 1
     db.commit()
     bad = sum(1 for s in statuses.values() if s not in ("OK", "EMPTY", "NA"))
@@ -173,7 +198,7 @@ def snapshots(db, now, local):
         active = store.watches(db, uid)
         items = []
         for n, w in enumerate(active, 1):
-            vs, lowest, legs, total = check.views(w, db)
+            vs, lowest, legs, total = check.views(w, db, since=local.date())
             low_offer = vs[0]["ties"][0] if vs[0]["ties"] else None
             at = w.last_check.replace(tzinfo=timezone.utc).astimezone(ROME) if w.last_check else None
             items.append((w, low_offer if not w.round_trip else None, lowest, at))
@@ -193,12 +218,14 @@ def snapshots(db, now, local):
         rows.append({"key": f"{uid}:list", "user_id": uid, "body": json.dumps({"text": text, "kb": kb})})
         past = store.watches(db, uid, status="past")
         ptext = f"🗂 <b>{i18n.t(lang, 'past_t')}</b>\n\n" + "\n".join(f"• {render.route(w, lang, short=True)} · {render.watch_days(w, lang)}" for w in past) if past else i18n.t(lang, "past_empty")
-        rows.append({"key": f"{uid}:past", "user_id": uid, "body": json.dumps({"text": ptext, "kb": []})})
+        # 📈 for the most recent ones: their last chart stays in the Worker's snapshots after they end
+        pkb = [[{"text": f"📈 {render.route(w, lang, short=True)} · {render.watch_days(w, lang)}", "callback_data": f"hi:{w.id}"}] for w in past[-10:]]
+        rows.append({"key": f"{uid}:past", "user_id": uid, "body": json.dumps({"text": ptext, "kb": pkb})})
         rows.append({"key": f"{uid}:lang", "user_id": uid, "body": json.dumps(lang)})
     for lang in (i18n.EN, i18n.IT):
         rows.append({"key": f"strings:{lang}", "user_id": 0, "body": json.dumps({k: i18n.S[lang][k] for k in (
             "welcome", "lang_q", "lang_set", "ack", "deleted", "kept", "help", "list_empty", "past_empty", "del_yes", "del_no",
-            "job_dead", "recovered", "dispatch_fail")})})
+            "job_dead", "recovered", "dispatch_fail", "no_chart")})})
     rows.append({"key": "next_due", "user_id": 0, "body": json.dumps(next_due(db))})  # the Worker starts the next run then
     for i in range(0, len(rows), 50):
         worker("/job/snapshot", {"rows": rows[i:i + 50]})

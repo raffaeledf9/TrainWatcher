@@ -17,19 +17,24 @@ def window_days(watch):
     return min(days) if days else None
 
 
-def evaluate(watch, state, lowest, live_ok, today, legs=None):
+def evaluate(watch, state, lowest, live_ok, today, legs=None, low_day=None):
     """watch: Watch; state: dict from the last Check ({} on the first); lowest: float|None (None = no matching
     offer); live_ok: True if every search unit of this Check succeeded (needed to claim "gone");
-    legs: optional {"out": price, "ret": price} for round trips. Returns (events, new_state)."""
+    legs: optional {"out": price, "ret": price} for round trips; low_day: travel day of the cheapest train.
+    Returns (events, new_state).
+
+    Purchase windows are per travel day: a multi-day watch's cheapest day decides "last day to buy" and "still on
+    sale", and the fare is gone because of the window only once the last day's window has closed."""
     s = dict(state)
     prev, events = s.get("low"), []
     mx = watch.max_price
-    days_left = (watch.first_day - today).days
+    low_day = low_day or watch.first_day
     wdays = window_days(watch)
-    window_closed = wdays is not None and days_left < wdays
+    days_left = (low_day - today).days
+    window_closed = wdays is not None and (watch.last_day - today).days < wdays
 
     def ev(kind, **data):
-        e = {"kind": kind, "low": lowest, "prev": prev, "legs": legs, "prev_legs": s.get("legs")}
+        e = {"kind": kind, "low": lowest, "prev": prev, "legs": legs, "prev_legs": s.get("legs"), "low_day": low_day}
         if mx is not None and lowest is not None:
             e["max"], e["under_max"] = mx, lowest <= mx
         e.update(data)
@@ -69,9 +74,9 @@ def evaluate(watch, state, lowest, live_ok, today, legs=None):
                 s["armed"] = True                        # re-arm once the price goes back above max
 
     if lowest is not None and wdays is not None:
-        if window_closed and not s.get("still_sent"):
+        if days_left < wdays and s.get("still_sent") != str(low_day):
             ev("still_on_sale")
-            s["still_sent"] = True
+            s["still_sent"] = str(low_day)
         if days_left == wdays and s.get("last_day_sent") != str(today):
             ev("last_day")
             s["last_day_sent"] = str(today)

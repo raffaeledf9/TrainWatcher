@@ -8,7 +8,7 @@ const FALLBACK = { ack: "⏳ Got it — checking prices, results in about a minu
   welcome: "Welcome to TrainWatcher 👋", lang_q: "Choose your language:", help: "/list · /past · /language", deleted: "🗑 Watch {n} deleted.",
   kept: "↩️ Watch {n} kept.", del_yes: "✅ Delete", del_no: "↩️ Keep", lang_set: "OK",
   job_dead: "⚠️ Price checks have stopped finishing.", recovered: "✅ Price checks are working again.",
-  dispatch_fail: "⚠️ GitHub refused to start a price check: the GitHub token has probably expired." };
+  dispatch_fail: "⚠️ GitHub refused to start a price check: the GitHub token has probably expired.", no_chart: "📈 No price history yet." };
 
 export default {
   async fetch(req, env, ctx) {
@@ -26,12 +26,14 @@ export default {
   },
 
   async scheduled(event, env, ctx) {
-    const minute = new Date(event.scheduledTime).getUTCMinutes();
+    const minute = new Date(event.scheduledTime).getUTCMinutes(), now = Date.now();
     const pending = await env.DB.prepare("SELECT COUNT(*) AS n FROM queue WHERE taken_at IS NULL").first("n");
     const due = await snap(env, "next_due"); // earliest next check of any watch (ms), published by the job; null = none
-    if (pending > 0) await dispatch(env, "queue");
-    else if (minute % 5 === 0 && due && Date.now() >= due) await dispatch(env, "due"); // no watch due: no run
-    await watchJob(env);
+    const { results } = await env.DB.prepare("SELECT k, v FROM meta WHERE k IN ('last_run_ok', 'pending_since')").all();
+    const m = Object.fromEntries(results.map((r) => [r.k, r.v]));
+    const d = decide(m, pending, due, minute, now);
+    if (d) await dispatch(env, d);
+    await notifyOnChange(env, "job_dead", jobDead(m, now));
   },
 };
 
@@ -67,7 +69,8 @@ async function telegram(req, env, ctx) {
     if (act === "st") return fromSnapshot(chat, await snap(env, `${uid}:status:${arg}`), S.list_empty);
     if (act === "hi") {
       const c = await snap(env, `${uid}:chart:${arg}`);
-      if (c) await sendPhoto(env, chat, c.png);
+      if (!c) return send(chat, S.no_chart);
+      await sendPhoto(env, chat, c.png);
       return new Response("ok");
     }
     if (act === "de") return fromSnapshot(chat, await snap(env, `${uid}:delete:${arg}`), S.list_empty);
@@ -214,6 +217,20 @@ async function jobApi(req, env, path) {
   return new Response("not found", { status: 404 });
 }
 
+// Which run to start this minute, if any. Runs start only when there is work: a queued command (at once), a due
+// watch (checked every 5 minutes), or a heartbeat after 2 hours without a finished run (GitHub disables the hourly
+// fallback schedule of a repo without activity). While a started run hasn't finished for 10 minutes the job is
+// failing: retry every 30 minutes instead of flooding GitHub with failing runs.
+function decide(m, pending, due, minute, now) {
+  const stuck = m.pending_since && now - Number(m.pending_since) > 10 * MIN;
+  const slot = stuck ? minute % 30 === 0 : minute % 5 === 0;
+  if (pending > 0 && (!stuck || slot)) return "queue";
+  if (!slot) return null;
+  if (due && now >= due) return "due";
+  if (m.last_run_ok && now - Number(m.last_run_ok) > 120 * MIN) return "heartbeat";
+  return null;
+}
+
 // Dead-man switch (map ticket 13): tell the Owner when runs stop finishing, and when they are back. Runs start only
 // when there is work, so silence alone is normal: alarm when a run this Worker started hasn't finished within
 // 30 minutes, or when nothing (not even GitHub's hourly fallback run) has finished for 3 hours.
@@ -221,11 +238,6 @@ async function jobApi(req, env, path) {
 function jobDead(m, now) {
   if (!m.last_run_ok) return false;
   return Boolean(m.pending_since && now - Number(m.pending_since) > 30 * MIN) || now - Number(m.last_run_ok) > 180 * MIN;
-}
-
-async function watchJob(env) {
-  const { results } = await env.DB.prepare("SELECT k, v FROM meta WHERE k IN ('last_run_ok', 'pending_since')").all();
-  await notifyOnChange(env, "job_dead", jobDead(Object.fromEntries(results.map((r) => [r.k, r.v])), Date.now()));
 }
 
 // One Owner notice when a problem starts (S[key]) and one when it ends; quiet at night like the alerts.

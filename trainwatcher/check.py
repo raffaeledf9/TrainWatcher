@@ -13,24 +13,24 @@ NA = "NA"  # the operator does not serve one of the stations
 CANARY = ("milano-centrale", "roma-termini")  # always has trains
 
 
-def record_units(watch, i):
-    """Units whose stored offers feed leg i. A same-day round trip is searched once per operator; its two
-    directions are stored under (op, A, B, day, pax, day) and (op, B, A, day, pax, day)."""
+def record_units(watch, i, since=None):
+    """Units whose stored offers feed leg i, for its days from `since` on (past days are neither searched nor
+    shown). A same-day round trip is searched once per operator; its two directions are stored under
+    (op, A, B, day, pax, day) and (op, B, A, day, pax, day)."""
     leg, out = watch.legs[i], []
     for op in watch.operators:
         pax = watch.passenger if op == "I" else "adult"
         if watch.same_day:
-            d = leg.dates()[0]
-            out.append((op, leg.origin, leg.destination, d, pax, d))
+            out += [(op, leg.origin, leg.destination, d, pax, d) for d in leg.upcoming(since)]
         else:
-            out += [(op, leg.origin, leg.destination, d, pax, None) for d in leg.dates()]
+            out += [(op, leg.origin, leg.destination, d, pax, None) for d in leg.upcoming(since)]
     return out
 
 
-def fetch_units(watch):
+def fetch_units(watch, since=None):
     out = []
     for i in range(len(watch.legs)):
-        for u in record_units(watch, i):
+        for u in record_units(watch, i, since):
             if not (watch.same_day and i == 1) and u not in out:
                 out.append(u)
     return out
@@ -99,17 +99,18 @@ def fetch_and_record(db, units, now, session=None):
     return statuses, failing
 
 
-def live_ok(watch, statuses):
+def live_ok(watch, statuses, since=None):
     """True if every unit of this watch was searched successfully in this run (needed to claim 'gone')."""
-    units = fetch_units(watch)
+    units = fetch_units(watch, since)
     return all(statuses.get(u) in (OK, EMPTY, NA) for u in units) and any(statuses.get(u) in (OK, EMPTY) for u in units)
 
 
-def views(watch, db, top=5):
-    """[view per leg], lowest (watch-level), legs ({out, ret} for round trips) from the stored current offers."""
+def views(watch, db, top=5, since=None):
+    """[view per leg], lowest (watch-level), legs ({out, ret} for round trips) from the stored current offers
+    of the days from `since` on."""
     out = []
     for i, leg in enumerate(watch.legs):
-        offers = [Offer(**d) for u in record_units(watch, i) for d in store.current_offers(db, u)]
+        offers = [Offer(**d) for u in record_units(watch, i, since) for d in store.current_offers(db, u)]
         matching = [o for o in offers if prices.matches(o, watch, leg)]
         low, ties, others = prices.ranking(matching, top)
         v = {"low": low, "ties": ties, "others": others, "matching": matching, "other_fare": None}
@@ -120,8 +121,9 @@ def views(watch, db, top=5):
         out.append(v)
     if not watch.round_trip:
         return out, out[0]["low"], None, None
-    total = prices.round_trip_total(out[0]["matching"], out[1]["matching"])[0]
-    return out, total, {"out": out[0]["low"], "ret": out[1]["low"]}, total
+    total, a, b = prices.round_trip_total(out[0]["matching"], out[1]["matching"])
+    out[0]["pair"], out[1]["pair"] = a, b  # the two trains that make the total
+    return out, total, {"out": a and a.price, "ret": b and b.price}, total
 
 
 def chart_series(watch, db, views_, top=5):
@@ -134,6 +136,8 @@ def chart_series(watch, db, views_, top=5):
                 h = store.history(db, [k])[k]
                 if h:
                     label = render.short_train(o) + "  " + render.times(o, watch.legs[i], arrow=" → ", html=False)
+                    if len(watch.legs[i].dates()) > 1:  # the same train runs every day: say which day
+                        label = f"{o.dep[8:10]}/{o.dep[5:7]}  " + label
                     if len(views_) > 1:
                         label = ("→ " if i == 0 else "← ") + label
                     series.append((label, h))

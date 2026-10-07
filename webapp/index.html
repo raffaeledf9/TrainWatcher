@@ -163,6 +163,8 @@ const chosenFares = () => S.fares.filter(f => fareShown(f) && fareOk(f));
 const chosenCls = () => S.cls.filter(c => S.ops.some(o => CLASSES[o].includes(c)));
 const fareName = id => id.split(":")[1];
 const stationName = k => (stations.find(s => s.k === k) || {}).n || "";
+// A text field, not type=number: an Italian keyboard types "25,50", which a number field may silently empty.
+const maxNum = () => +S.max.trim().replace(",", ".");
 const flip = (arr, v) => arr.includes(v) ? arr.filter(x => x !== v) : [...arr, v];
 
 function validate() {
@@ -178,7 +180,7 @@ function validate() {
   }
   if (S.trip === "round" && !e.ret && firstLast(S.ret)[1] < firstLast(S.out)[0]) e.ret = t("e_ret");
   if (S.kind === "fares" && !chosenFares().length) e.fares = t("e_fares");
-  if (mode === "watch" && S.max !== "" && !(+S.max > 0 && +S.max < 10000)) e.max = t("e_max");
+  if (mode === "watch" && S.max.trim() !== "" && !(maxNum() > 0 && maxNum() < 10000)) e.max = t("e_max");
   return errors = e;
 }
 
@@ -188,7 +190,7 @@ function payload() {
   const cls = chosenCls();
   return {v: 1, lang: lang, from: S.from, to: S.to, out: leg(S.out), ret: S.trip === "round" ? leg(S.ret) : null, pax: S.pax,
     fares: S.kind === "fares" ? chosenFares() : null, cls: cls.length ? cls : null, ops: S.ops,
-    max: mode === "watch" && S.max !== "" ? +S.max : null, rises: mode === "watch" && S.kind === "cheapest" && S.rises};
+    max: mode === "watch" && S.max.trim() !== "" ? maxNum() : null, rises: mode === "watch" && S.kind === "cheapest" && S.rises};
 }
 
 // ---------- submit ----------
@@ -400,7 +402,7 @@ function form() {
       popBtn("cls", t("class"), "🪑 " + (chosenCls().join(", ") || t("anyClass"))),
       open === "cls" && h("div", {class: "card span"}, classChips()),
       select(t("ops"), [["TI", "🚆 Trenitalia + Italo"], ["T", "🚆 Trenitalia"], ["I", "🚆 Italo"]], S.ops.join(""), v => { S.ops = v.split(""); }, isSearch ? "span" : ""),
-      !isSearch && h("input", {type: "number", inputmode: "decimal", min: "1", step: "any", value: S.max, placeholder: "€ max (" + t("opt") + ")",
+      !isSearch && h("input", {type: "text", inputmode: "decimal", value: S.max, placeholder: "€ max (" + t("opt") + ")",
         "aria-label": t(S.trip === "round" ? "maxRT" : "max"), "aria-describedby": "e-max", oninput: e => { S.max = e.target.value; paintErrors(); }}),
       !isSearch && err("max", "span"),
       S.kind === "fares" && popBtn("fares", t("fares"), "🎫 " + (chosenFares().map(fareName).join(", ") || t("fares") + "…"), "span"),

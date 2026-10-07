@@ -35,6 +35,17 @@ def _overlap(a, b):
     return any(_at(a, w) is not None and _at(a, w) == _at(b, w) for w in sorted({x for x, _ in a} | {x for x, _ in b}))
 
 
+def _merge(series):
+    """{history: [labels]}: trains with identical price histories share one line. Observations also record
+    seat-count changes; only price changes count here, or equal lines wouldn't merge."""
+    merged = {}
+    for label, points in series:
+        points = [p for i, p in enumerate(points) if i == 0 or p[1] != points[i - 1][1]]
+        if points:
+            merged.setdefault(tuple(points), []).append(label)
+    return merged
+
+
 def chart_png(series, title, lang, max_price=None):
     """series: [(label, [(utc_iso_datetime, price_or_None), ...])]; None marks 'not on sale' (a gap in the line)."""
     import matplotlib
@@ -43,10 +54,7 @@ def chart_png(series, title, lang, max_price=None):
     import matplotlib.pyplot as plt
     from matplotlib.ticker import FuncFormatter
 
-    merged = {}                                                # identical histories → one line listing every train
-    for label, points in series:
-        if points:
-            merged.setdefault(tuple(points), []).append(label)
+    merged = _merge(series)
     now = datetime.now(ROME).replace(tzinfo=None)
     fig, ax = plt.subplots(figsize=(6, 3.4))
     ends, hist = [], list(merged)

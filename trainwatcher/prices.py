@@ -1,5 +1,7 @@
 """From Offers to what the Owner sees: which offers match a Watch, Best price per Train, Lowest price
 and Ties per Leg, round-trip totals (CONTEXT.md)."""
+import bisect
+
 from trainwatcher.model import FARES
 from trainwatcher.offers import TRENITALIA
 
@@ -66,14 +68,21 @@ def ranking(offers, top=5):
 
 
 def round_trip_total(out_offers, ret_offers):
-    """Cheapest total for a round trip: one-way + one-way, or A/R + A/R (A/R fares must be bought together).
+    """Cheapest total for a round trip that can really be travelled: the return leaves after the outbound
+    arrives, and it's one-way + one-way or A/R + A/R of the same operator (A/R fares are bought together).
     Returns (total, out_offer, ret_offer) or (None, None, None)."""
-    def cheapest(offers, ar):
-        c = [o for o in offers if o.same_day_ar == ar]
-        return min(c, key=lambda o: o.price) if c else None
-    options = []
-    for ar in (False, True):
-        a, b = cheapest(out_offers, ar), cheapest(ret_offers, ar)
-        if a and b:
-            options.append((round(a.price + b.price, 2), a, b))
-    return min(options, key=lambda x: x[0]) if options else (None, None, None)
+    best = (None, None, None)
+    families = [(False, None)] + [(True, op) for op in sorted({o.operator for o in out_offers if o.same_day_ar})]
+    for ar, op in families:
+        pick = lambda offers: [o for o in offers if o.same_day_ar == ar and op in (None, o.operator)]
+        rets = sorted(pick(ret_offers), key=lambda o: o.dep)
+        cheapest_from = [None] * (len(rets) + 1)             # cheapest return among rets[i:]
+        for i in range(len(rets) - 1, -1, -1):
+            nxt = cheapest_from[i + 1]
+            cheapest_from[i] = rets[i] if nxt is None or rets[i].price < nxt.price else nxt
+        deps = [o.dep for o in rets]
+        for a in pick(out_offers):
+            b = cheapest_from[bisect.bisect_right(deps, a.arr)]
+            if b is not None and (best[0] is None or a.price + b.price < best[0]):
+                best = (round(a.price + b.price, 2), a, b)
+    return best

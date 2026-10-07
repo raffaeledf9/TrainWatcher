@@ -139,7 +139,7 @@ def _leg_block(view, leg, lang):
     return lines
 
 
-def status(watch, views, checked_at, lang, today=None, search=False, total=None, stale_since=None, search_id=None):
+def status(watch, views, checked_at, lang, today=None, search=False, total=None, stale_since=None, search_id=None, failed=None):
     """views: one dict per leg {low, ties, others, other_fare}; total: round-trip total or None."""
     pax = t(lang, watch.passenger)
     if search:
@@ -159,6 +159,8 @@ def status(watch, views, checked_at, lang, today=None, search=False, total=None,
     tail = [""]
     if not search and watch.max_price is not None and low is not None and low > watch.max_price:
         tail.append(f"⚠️ {t(lang, 'above')} <b>{price(watch.max_price, lang)}</b>")
+    if failed:
+        tail.append(t(lang, "no_answer", ops=" + ".join(failed)))
     if stale_since:
         tail.append(t(lang, "stale", t=f"{stale_since:%H:%M}"))
     tail.append(f"🔄 {t(lang, 'live')}" if search else last_check(checked_at, lang))
@@ -221,7 +223,7 @@ def _notes(watch, e, lang):
     w = window_days(watch)
     if w is not None:
         from datetime import timedelta
-        out.append(f"🛒 {t(lang, 'window', d=day(watch.first_day - timedelta(days=w), lang))}")
+        out.append(f"🛒 {t(lang, 'window', d=day((e.get('low_day') or watch.first_day) - timedelta(days=w), lang))}")
     return out
 
 
@@ -232,7 +234,7 @@ def _round_trip_alert(watch, e, views, lang, today):
              f"{t(lang, 'total')} <b>{price(e['low'], lang)}</b>" + (f" <s>{price(e['prev'], lang)}</s>" if e.get("prev") is not None else "")]
     legs, prev = e.get("legs") or {}, e.get("prev_legs") or {}
     for i, k in enumerate(("out", "ret")):
-        o = views[i]["ties"][0] if views[i].get("ties") else None
+        o = views[i].get("pair") or (views[i]["ties"][0] if views[i].get("ties") else None)
         if o is None:
             continue
         changed = prev.get(k) is not None and legs.get(k) != prev.get(k)

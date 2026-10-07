@@ -35,6 +35,10 @@ class Leg:
         b = date.fromisoformat(self.days[-1])
         return [a + timedelta(days=i) for i in range((b - a).days + 1)]
 
+    def upcoming(self, since=None):
+        """The leg's days from `since` on (all of them when since is None)."""
+        return [d for d in self.dates() if since is None or d >= since]
+
     def accepts(self, dep_iso):
         """True if a departure (ISO local datetime) falls on one of the leg's days and inside its window."""
         d, t = date.fromisoformat(dep_iso[:10]), time.fromisoformat(dep_iso[11:16])
@@ -73,6 +77,16 @@ class Watch:
     @property
     def last_day(self):
         return max(d for leg in self.legs for d in leg.dates())
+
+    def next_day(self, today):
+        """The earliest travel day not yet past (the last one once all are past): what check cadence counts from."""
+        return min((d for leg in self.legs for d in leg.upcoming(today)), default=self.last_day)
+
+    def alertable(self, today):
+        """Alerts only cover days that haven't started: on a travel day, trains leaving would look like price rises
+        and, by evening, like 'sold out'. A round trip stops alerting once its outbound days have all begun."""
+        tomorrow = today + timedelta(days=1)
+        return all(leg.upcoming(tomorrow) for leg in self.legs)
 
     @property
     def same_day(self):
@@ -145,5 +159,9 @@ def from_payload(p, user_id, station_keys, today=None):
     mx = p.get("max")
     if mx is not None and (not isinstance(mx, (int, float)) or not 0 < mx < 10000):
         raise Invalid("bad max price")
-    return Watch(user_id=user_id, legs=legs, passenger=pax, fares=fares, classes=classes, operators=ops,
-                 max_price=float(mx) if mx is not None else None, rises=bool(p.get("rises")) and fares is None)
+    w = Watch(user_id=user_id, legs=legs, passenger=pax, fares=fares, classes=classes, operators=ops,
+              max_price=float(mx) if mx is not None else None, rises=bool(p.get("rises")) and fares is None)
+    for f in fares or ():  # fares that could never match would leave the watch silently empty forever
+        if not set(f.split(":")[0]) & set(ops) or (f == "TI:A/R same day" and not w.same_day):
+            raise Invalid("fare not available for this trip")
+    return w
