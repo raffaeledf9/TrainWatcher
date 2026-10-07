@@ -137,7 +137,7 @@ class FullRuns(unittest.TestCase):
         buttons = next(m for m in w.sent if "FrecciaYOUNG" in m["text"])["reply_markup"]["inline_keyboard"][0]
         self.assertEqual([b["text"] for b in buttons], ["🎫 Prenota su Trenitalia"])  # a Trenitalia fare: no Italo button
         self.assertTrue(all(len(m["text"]) < 4096 for m in w.sent))  # 120 trains tie on a flat month: still one message
-        self.assertIn("e altri 112 treni a questo prezzo", search["text"])
+        self.assertIn("• lun 30 nov: 07:00 Centrale, 07:10 Rogoredo, 18:00 Centrale, 18:10 Rogoredo", search["text"])  # all 120, by day
         self.assertIn("1:list", w.snaps)
         self.assertIsNotNone(w.snaps["next_due"])
 
@@ -154,8 +154,9 @@ class FullRuns(unittest.TestCase):
         # Nov 10, travel day of watch 1, 15:00: the morning trains are gone; that is not a price change
         texts = self.run_at(datetime(2026, 11, 10, 14, 0))
         self.assertFalse(any("FrecciaYOUNG" in t and ("Prezzo" in t or "non più disponibile" in t) for t in texts), texts)
-        self.assertIn("18:00", w.snaps["1:status:1"]["text"])          # the status still lists the evening trains
-        self.assertNotIn("07:00", w.snaps["1:status:1"]["text"])
+        status1 = "\n".join(p["text"] for p in w.snaps["1:status:1"]["parts"])
+        self.assertIn("18:00", status1)                              # the status still lists the evening trains
+        self.assertNotIn("07:00", status1)
 
         # Nov 11: watch 1 is over and shows in /past with its chart button
         self.run_at(datetime(2026, 11, 11, 8, 0))

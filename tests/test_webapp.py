@@ -44,6 +44,11 @@ class WebappTest(unittest.TestCase):
         used = set(re.findall(r'\bt\("(\w+)"\)', HTML))
         self.assertLessEqual(used, set(strings["en"]), "t() keys missing from STR")
 
+    def test_limits_match_the_model(self):
+        for name in ("HORIZON_DAYS", "MAX_DAYS"):
+            m = re.search(rf"^const {name} = (\d+);", HTML, re.M)
+            self.assertEqual(int(m.group(1)), getattr(model, name), name)
+
     def test_fares_and_classes_match_the_model(self):
         self.assertEqual(const("FARES"), model.FARES)
         used = set(re.findall(r'"((?:T|I|TI):[^"]+)"', HTML))

@@ -18,5 +18,16 @@ CREATE TABLE IF NOT EXISTS snapshots (
   body TEXT NOT NULL
 );
 
--- Small key/value facts: last dispatch, last successful run, watchdog state.
+-- Friends: who opened the invite link and what the Owner decided (pending | allowed | denied | removed).
+CREATE TABLE IF NOT EXISTS users (
+  id INTEGER PRIMARY KEY,
+  status TEXT NOT NULL,
+  name TEXT NOT NULL,
+  username TEXT,
+  lang TEXT,
+  requested_at INTEGER NOT NULL,
+  decided_at INTEGER
+);
+
+-- Small key/value facts: last dispatch, last successful run, watchdog state, invite code, friends' rate limits.
 CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT NOT NULL);

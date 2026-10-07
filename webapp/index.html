@@ -73,8 +73,9 @@
 <script>
 "use strict";
 const WORKER = "https://trainwatcher.trnwtchbot.workers.dev";
-// ponytail: fixed booking horizon (Italo's when the form was designed); move it forward as the operators open later dates.
-const LAST_DAY = "2027-03-31";
+// Mirrors of trainwatcher.model (checked by tests/test_webapp.py): how far ahead a day can be, how long a period.
+const HORIZON_DAYS = 200;
+const MAX_DAYS = 92;
 // Mirror of trainwatcher.model.FARES: fare id -> the only passenger type allowed to buy it (null = everyone). Checked by tests/test_webapp.py.
 const FARES = {"T:Base": null, "T:Economy": null, "T:Super Economy": null, "T:FrecciaYOUNG": "young", "T:FrecciaSENIOR": "senior",
   "I:Flex": null, "I:Economy": null, "I:Low Cost": null, "I:eXtra Magic": null, "I:Italo Giovani": "young", "I:Italo Senior": "senior",
@@ -86,7 +87,7 @@ const PRESETS = {any: null, morning: ["06:00", "12:00"], afternoon: ["12:00", "1
 const STR = {
   "en": {"search": "Search", "watchT": "Watch", "modeL": "Search or watch", "from": "From", "to": "To", "swap": "Swap From and To", "clear": "Clear",
     "trip": "Trip", "oneway": "One way", "round": "Round trip", "out": "Outbound", "ret": "Return", "date": "Date",
-    "days": "Days", "d1": "One day", "dN": "Several days", "dM": "Whole month", "pickStart": "Tap the first day", "pickEnd": "Now tap the last day",
+    "days": "Days", "d1": "One day", "dW": "Week", "dM": "Month", "dN": "Custom", "pickStart": "Tap the first day", "pickEnd": "Now tap the last day",
     "prevM": "Previous month", "nextM": "Next month", "same_day": "Same-day return: the A/R fare is included",
     "time": "Departure time", "any": "Any time", "morning": "Morning (6–12)", "afternoon": "Afternoon (12–18)", "evening": "Evening (18–24)", "custom": "Custom…",
     "tFrom": "Earliest departure", "tTo": "Latest departure",
@@ -95,14 +96,14 @@ const STR = {
     "max": "Max price (€)", "maxRT": "Max total price (€)", "opt": "optional",
     "rises": "Also alert when the price goes up", "risesFare": "Fare watches always alert on rises and drops",
     "review": "Review", "back": "Back", "create": "Create watch", "sending": "Sending…",
-    "e_station": "Pick a station from the list", "e_same": "From and To must differ", "e_date": "Pick a future date", "e_long": "Pick at most 31 days",
+    "e_station": "Pick a station from the list", "e_same": "From and To must differ", "e_date": "Pick a future date", "e_long": "Pick at most 92 days",
     "e_time": "The end time must not be before the start time", "e_ret": "Return must not be before the outbound", "e_fares": "Pick at least one fare",
     "e_max": "Enter a price between 0 and 10,000 €", "e_pax": "not for this passenger",
     "noTg": "Open this form from the bot in Telegram: submitting only works there.", "noSt": "Could not load the station list.",
     "sendFail": "Could not reach the bot. Please try again."},
   "it": {"search": "Cerca", "watchT": "Monitora", "modeL": "Cerca o monitora", "from": "Da", "to": "A", "swap": "Inverti partenza e arrivo", "clear": "Cancella",
     "trip": "Viaggio", "oneway": "Solo andata", "round": "Andata e ritorno", "out": "Andata", "ret": "Ritorno", "date": "Data",
-    "days": "Giorni", "d1": "Un giorno", "dN": "Più giorni", "dM": "Mese intero", "pickStart": "Tocca il primo giorno", "pickEnd": "Ora tocca l’ultimo giorno",
+    "days": "Giorni", "d1": "Un giorno", "dW": "Settimana", "dM": "Mese", "dN": "Personalizzato", "pickStart": "Tocca il primo giorno", "pickEnd": "Ora tocca l’ultimo giorno",
     "prevM": "Mese precedente", "nextM": "Mese successivo", "same_day": "Ritorno in giornata: inclusa la tariffa A/R",
     "time": "Orario di partenza", "any": "Qualsiasi", "morning": "Mattina (6–12)", "afternoon": "Pomeriggio (12–18)", "evening": "Sera (18–24)", "custom": "Personalizzato…",
     "tFrom": "Partenza dalle", "tTo": "Partenza entro le",
@@ -111,7 +112,7 @@ const STR = {
     "max": "Prezzo massimo (€)", "maxRT": "Prezzo massimo totale (€)", "opt": "facoltativo",
     "rises": "Avvisami anche quando il prezzo sale", "risesFare": "Con tariffe specifiche avvisi sempre su rialzi e ribassi",
     "review": "Riepilogo", "back": "Indietro", "create": "Crea monitoraggio", "sending": "Invio…",
-    "e_station": "Scegli una stazione dall'elenco", "e_same": "Partenza e arrivo devono essere diversi", "e_date": "Scegli una data futura", "e_long": "Scegli al massimo 31 giorni",
+    "e_station": "Scegli una stazione dall'elenco", "e_same": "Partenza e arrivo devono essere diversi", "e_date": "Scegli una data futura", "e_long": "Scegli al massimo 92 giorni",
     "e_time": "L'orario finale non può precedere quello iniziale", "e_ret": "Il ritorno non può precedere l'andata", "e_fares": "Scegli almeno una tariffa",
     "e_max": "Inserisci un prezzo tra 0 e 10.000 €", "e_pax": "non per questo passeggero",
     "noTg": "Apri questo modulo dal bot in Telegram: l'invio funziona solo lì.", "noSt": "Impossibile caricare l'elenco delle stazioni.",
@@ -143,6 +144,7 @@ const addDays = (s, n) => { const [y, m, d] = s.split("-").map(Number); return y
 const addMonths = (s, n) => ymd(new Date(+s.slice(0, 4), +s.slice(5, 7) - 1 + n, 1)).slice(0, 7);
 const monthEnd = s => `${s}-${pad(new Date(+s.slice(0, 4), +s.slice(5, 7), 0).getDate())}`;
 const TODAY = ymd(new Date());
+const LAST_DAY = addDays(TODAY, HORIZON_DAYS);  // rolling: a fixed date would grey out the whole calendar one day
 const fmt = (s, o) => { const r = new Intl.DateTimeFormat(lang === "it" ? "it-IT" : "en-GB", o).format(new Date(s + "T12:00:00")); return r[0].toUpperCase() + r.slice(1); };
 
 // ---------- state ----------
@@ -179,7 +181,7 @@ function validate() {
   for (const k of legKeys()) {
     const L = S[k];
     if (firstLast(L)[1] < TODAY) e[k] = t("e_date");
-    else if (dayCount(L) > 31) e[k] = t("e_long");
+    else if (dayCount(L) > MAX_DAYS) e[k] = t("e_long");
     else if (L.tp === "custom" && !(L.tA && L.tB && L.tA <= L.tB)) e[k] = t("e_time");
   }
   if (S.trip === "round" && !e.ret && firstLast(S.ret)[1] < firstLast(S.out)[0]) e.ret = t("e_ret");
@@ -302,6 +304,7 @@ function toggleCal(k) {
 
 function pickDay(L, s) {
   if (L.mode === "d1") { L.d1 = s; open = null; }
+  else if (L.mode === "dW") { L.dA = s; L.dB = addDays(s, 6) > LAST_DAY ? LAST_DAY : addDays(s, 6); open = null; }
   else if (!pickEnd) { L.dA = L.dB = s; pickEnd = true; }
   else { if (s < L.dA) [L.dA, L.dB] = [s, L.dA]; else L.dB = s; open = null; }
   render();
@@ -310,7 +313,7 @@ function pickDay(L, s) {
 function calendar(k) {
   const L = S[k];
   return h("div", {class: "cal span"},
-    seg(t("days"), [["d1", t("d1")], ["dN", t("dN")], ["dM", t("dM")]], L.mode, v => { L.mode = v; pickEnd = false; }),
+    seg(t("days"), [["d1", t("d1")], ["dW", t("dW")], ["dM", t("dM")], ["dN", t("dN")]], L.mode, v => { L.mode = v; pickEnd = false; }),
     L.mode === "dM" ? monthGrid(L) : dayGrid(L));
 }
 
@@ -327,14 +330,14 @@ function dayGrid(L) {
   const cells = Array.from({length: lead}, () => h("span"));
   for (let d = 1; d <= n; d++) {
     const s = `${view}-${pad(d)}`, on = L.mode === "d1" ? s === L.d1 : s === L.dA || s === L.dB;
-    cells.push(h("button", {type: "button", class: "day" + (L.mode === "dN" && s > L.dA && s < L.dB ? " in" : ""), "aria-pressed": String(on),
+    cells.push(h("button", {type: "button", class: "day" + ((L.mode === "dN" || L.mode === "dW") && s > L.dA && s < L.dB ? " in" : ""), "aria-pressed": String(on),
       "aria-label": fmt(s, {weekday: "long", day: "numeric", month: "long"}), disabled: s < TODAY || s > LAST_DAY, onclick: () => pickDay(L, s)}, String(d)));
   }
   const nav = step => h("button", {type: "button", "aria-label": t(step < 0 ? "prevM" : "nextM"),
     disabled: step < 0 ? view <= TODAY.slice(0, 7) : view >= LAST_DAY.slice(0, 7), onclick: () => { view = addMonths(view, step); render(); }}, step < 0 ? "‹" : "›");
   const wd = lang === "it" ? ["Lu", "Ma", "Me", "Gi", "Ve", "Sa", "Do"] : ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"];
   return [h("div", {class: "calh"}, nav(-1), h("b", {}, fmt(view + "-15", {month: "long", year: "numeric"})), nav(1)),
-    L.mode === "dN" ? h("div", {class: "hint c"}, t(pickEnd ? "pickEnd" : "pickStart")) : null,
+    L.mode === "dN" || L.mode === "dW" ? h("div", {class: "hint c"}, t(pickEnd ? "pickEnd" : "pickStart")) : null,
     h("div", {class: "calg"}, wd.map(w => h("span", {class: "wd", "aria-hidden": "true"}, w)), cells)];
 }
 
