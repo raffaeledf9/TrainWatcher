@@ -30,12 +30,14 @@ def units(watch, since=None):
     return fetch_units(watch, since)
 
 
-def plan(due_watches, now, budget_s=RUN_FETCH_BUDGET_S, today=None):
+def plan(due_watches, now, budget_s=RUN_FETCH_BUDGET_S, today=None, first=()):
     """Order due watches (nearest departure first, then the longest-unchecked; a watch skipped last run goes
     first) and take them while the estimated cost fits the budget. Units shared by several watches are
     fetched once. Returns (watches_to_check, units_to_fetch, deferred_watches)."""
     today = today or now.date()
-    order = sorted(due_watches, key=lambda w: (not getattr(w, "skipped", False), w.next_day(today), getattr(w, "last_check", None) or datetime.min))
+    # first: watches the Owner just created or asked to check now; never postpone what they're waiting for
+    order = sorted(due_watches, key=lambda w: (w.id not in first, not getattr(w, "skipped", False), w.next_day(today),
+                                                getattr(w, "last_check", None) or datetime.min))
     take, fetch, deferred, spent = [], {}, [], 0.0
     for w in order:
         new = [u for u in units(w, today) if u not in fetch]

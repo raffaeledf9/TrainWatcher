@@ -11,7 +11,7 @@ from io import BytesIO
 from pathlib import Path
 from unittest import mock
 
-from trainwatcher import alerts, check, model, prices, run, schedule, store
+from trainwatcher import alerts, check, model, prices, render, run, schedule, store
 from trainwatcher.charts import _merge
 from trainwatcher.offers import ITALO, TRENITALIA, Offer
 
@@ -131,6 +131,70 @@ class Validation(unittest.TestCase):
         watch(fares=["TI:A/R same day"], ret={"d": ["2026-11-10"], "w": None})
 
 
+class FrecciabiancaClasses(unittest.TestCase):
+    def test_standard_is_2nd_class_business_is_1st(self):
+        fb = lambda cls: Offer(TRENITALIA, "8619", "FB", "2026-11-10T13:10", "2026-11-10T20:03", "a", "b", cls, "Base", 23.9)
+        std, bus = watch(cls=["Standard"]), watch(cls=["Business"])
+        leg = std.legs[0]
+        self.assertEqual([prices.matches(fb("2ª Classe"), w, leg) for w in (std, bus)], [True, False])
+        self.assertEqual([prices.matches(fb("1ª Classe"), w, leg) for w in (std, bus)], [False, True])
+
+
+class SecondPass(unittest.TestCase):
+    def test_one_train_is_singular(self):
+        o = Offer(ITALO, "9967", "IT", "2026-11-10T06:15", "2026-11-10T09:24", "MC_", "RMT", "Smart", "Economy", 29.9)
+        text, _ = render.status(watch(), [{"low": 29.9, "ties": [o], "others": []}], NOW, "en", date(2026, 10, 6))
+        self.assertIn("€29.90</b> lowest · 1 train\n", text)
+
+    def test_same_day_return_ticket_opens_the_return_search(self):
+        w = watch(ret={"d": ["2026-11-10"], "w": None}, ops=["I"])
+        out = Offer(ITALO, "9967", "IT", "2026-11-10T06:15", "2026-11-10T09:24", "MC_", "RMT", "Smart", "Economy", 29.9)
+        back = Offer(ITALO, "9990", "IT", "2026-11-10T18:00", "2026-11-10T21:10", "RMT", "MC_", "Smart", "Economy", 19.9)
+        views = [{"ties": [out], "pair": out}, {"ties": [back], "pair": back}]
+        e = {"kind": "drop", "low": 49.8, "prev": 59.8, "legs": {"out": 29.9, "ret": 19.9}, "prev_legs": {"out": 29.9, "ret": 29.9}}
+        _, kb = render.alert(w, [e], views, NOW, "en", date(2026, 10, 6))
+        urls = {b["text"]: b.get("url", "") for b in kb[0]}
+        self.assertIn("osc=MI0&dsc=RMT", urls["🎫 06:15 IT 9967"])
+        self.assertIn("osc=RMT&dsc=MI0", urls["🎫 18:00 IT 9990"])
+
+    def test_first_time_on_sale_is_not_back(self):
+        w = watch()
+        _, s = alerts.evaluate(w, {}, None, True, date(2026, 10, 6))          # created before sales opened
+        self.assertEqual([e["kind"] for e in alerts.evaluate(w, s, 29.9, True, date(2026, 10, 7))[0]], ["on_sale"])
+        _, s = alerts.evaluate(w, {}, 29.9, True, date(2026, 10, 6))
+        _, s = alerts.evaluate(w, s, None, True, date(2026, 10, 7))           # sold out
+        self.assertEqual([e["kind"] for e in alerts.evaluate(w, s, 29.9, True, date(2026, 10, 8))[0]], ["back"])
+
+
+class StateSize(unittest.TestCase):
+    """History of one single-day watch was 95 % seat-count changes: 1.9 MB after 11 checks."""
+
+    def test_seat_changes_are_not_history(self):
+        db = store.connect(":memory:")
+        self.addCleanup(db.close)
+        unit = ("I", "milano-tutte", "roma-termini", date(2026, 11, 10), "adult", None)
+        o = lambda price, seats: Offer(ITALO, "9967", "IT", "2026-11-10T06:15", "2026-11-10T09:24", "MC_", "RMT", "Smart", "Economy", price, seats)
+        for price, seats in ((29.9, 8), (29.9, 7), (29.9, 6), (34.9, 6)):
+            store.record(db, unit, [o(price, seats)], NOW)
+        self.assertEqual([p for _, p in store.history(db, [store.offer_key(unit, o(0, 0))])[store.offer_key(unit, o(0, 0))]], [29.9, 34.9])
+        self.assertEqual(store.current_offers(db, unit)[0]["seats"], 6)  # seats left still shown
+
+    def test_past_days_are_pruned(self):
+        db = store.connect(":memory:")
+        self.addCleanup(db.close)
+        o = Offer(ITALO, "9967", "IT", "2026-11-10T06:15", "2026-11-10T09:24", "MC_", "RMT", "Smart", "Economy", 29.9)
+        for day in (date(2026, 11, 9), date(2026, 11, 10)):
+            store.record(db, ("I", "a", "b", day, "adult", None), [o], NOW)
+        self.assertEqual(store.prune(db, date(2026, 11, 10)), 1)
+        self.assertEqual(db.execute("SELECT COUNT(*) FROM offers_last").fetchone()[0], 1)
+
+    def test_what_the_owner_waits_for_is_never_postponed(self):
+        due = [watch(), watch(out={"d": ["2026-11"], "w": None})]
+        due[0].id, due[1].id = 1, 2
+        take, _, deferred = schedule.plan(due, NOW, budget_s=1, first={2})
+        self.assertEqual(([w.id for w in take], [w.id for w in deferred]), ([2], [1]))
+
+
 class Charts(unittest.TestCase):
     def test_seat_changes_dont_split_equal_lines(self):
         a = [("2026-10-01T10:00", 29.9)]
@@ -167,7 +231,7 @@ class WorkerScheduling(unittest.TestCase):
 class RestoreState(unittest.TestCase):
     """An unreachable state branch must fail the step (so the empty state is never saved over the real one)."""
 
-    def test_three_cases(self):
+    def test_cases(self):
         lines = (ROOT / ".github" / "workflows" / "run.yml").read_text().splitlines()
         start = next(i for i, l in enumerate(lines) if l.strip() == "id: restore")
         start = next(i for i in range(start, len(lines)) if lines[i].strip() == "run: |") + 1
@@ -179,17 +243,22 @@ class RestoreState(unittest.TestCase):
             body.append(l[indent:])
         script = "\n".join(body)
         out = {}
-        for case, ls, fetch in (("present", 0, 0), ("absent", 2, 128), ("down", 128, 128)):
+        # (ls-remote exit, fetch exit, file stored on the branch)
+        for case, ls, fetch, stored in (("gzip", 0, 0, "state.db.gz.enc"), ("older format", 0, 0, "state.db.enc"),
+                                        ("absent", 2, 128, None), ("down", 128, 128, None)):
             with tempfile.TemporaryDirectory() as d:
-                Path(d, "git").write_text(f'#!/bin/bash\ncase "$1" in ls-remote) exit {ls};; fetch) exit {fetch};; show) echo x;; esac\n')
-                Path(d, "openssl").write_text("#!/bin/bash\ntouch state.db\n")
+                Path(d, "git").write_text(f'#!/bin/bash\ncase "$1" in ls-remote) exit {ls};; fetch) exit {fetch};;\n'
+                                          f'show) [ "$2" = "FETCH_HEAD:{stored}" ] && echo x || exit 128;; esac\n')
+                Path(d, "openssl").write_text('#!/bin/bash\nwhile [ $# -gt 0 ]; do [ "$1" = -out ] && echo db > "$2"; shift; done\n')
+                Path(d, "gunzip").write_text("#!/bin/bash\necho db\n")
                 Path(d, "sleep").write_text("#!/bin/bash\n")
-                for f in ("git", "openssl", "sleep"):
+                for f in ("git", "openssl", "gunzip", "sleep"):
                     os.chmod(Path(d, f), 0o755)
                 r = subprocess.run(["bash", "-e", "-c", script], cwd=d, env={**os.environ, "PATH": d + ":" + os.environ["PATH"]},
                                    capture_output=True, text=True)
-                out[case] = (r.returncode, r.stdout.strip().splitlines()[-1])
-        self.assertEqual(out, {"present": (0, "state restored"), "absent": (0, "no state yet"), "down": (1, "state branch unreachable")})
+                out[case] = (r.returncode, r.stdout.strip().splitlines()[-1], Path(d, "state.db").exists())
+        self.assertEqual(out, {"gzip": (0, "state restored", True), "older format": (0, "state restored", True),
+                               "absent": (0, "no state yet", False), "down": (1, "state branch unreachable", False)})
 
 
 if __name__ == "__main__":

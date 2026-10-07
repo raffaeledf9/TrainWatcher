@@ -10,7 +10,7 @@ _MO = {EN: ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct"
 S = {
     EN: dict(
         book_i="🎫 Book on Italo", book_t="🎫 Book on Trenitalia", hist="📈 History", now="🔄 Check now", dele="🗑 Delete",
-        lowest="lowest", trains="trains", next_="Next cheapest", above="Lowest is above your max", last_check="last check",
+        lowest="lowest", trains="trains", train="train", on_sale="Now on sale", next_="Next cheapest", above="Lowest is above your max", last_check="last check",
         adult="Adult", young="Young", senior="Senior", cheapest="Cheapest fare", left="left", none_found="No matching trains right now.",
         other_fare="cheapest other fare", out="Outbound", ret="Return", total="Total",
         up="Price up", down="New low", under="Under your max", back="Back on sale", gone="no longer available",
@@ -42,7 +42,7 @@ S = {
     ),
     IT: dict(
         book_i="🎫 Prenota su Italo", book_t="🎫 Prenota su Trenitalia", hist="📈 Storico", now="🔄 Aggiorna", dele="🗑 Elimina",
-        lowest="il più basso", trains="treni", next_="Altri prezzi", above="Il prezzo più basso supera il tuo massimo di", last_check="ultimo controllo",
+        lowest="il più basso", trains="treni", train="treno", on_sale="In vendita", next_="Altri prezzi", above="Il prezzo più basso supera il tuo massimo di", last_check="ultimo controllo",
         adult="Adulto", young="Giovane", senior="Senior", cheapest="Più economica", left="posti", none_found="Nessun treno corrispondente al momento.",
         other_fare="tariffa più economica alternativa", out="Andata", ret="Ritorno", total="Totale",
         up="Prezzo in aumento", down="Nuovo minimo", under="Sotto il tuo massimo", back="Di nuovo in vendita", gone="non più disponibile",

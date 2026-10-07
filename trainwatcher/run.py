@@ -152,7 +152,7 @@ def check_and_alert(db, now, local, forced, searches):
     due = store.due_watches(db, now)
     due_ids = {w.id for w in due}
     due += [store.get_watch(db, i) for i in forced if i not in due_ids and store.get_watch(db, i)]
-    take, _, deferred = schedule.plan(due, now, today=today)
+    take, _, deferred = schedule.plan(due, now, today=today, first=forced)
     units = list(dict.fromkeys(u for w in take + searches for u in check.fetch_units(w, today)))
     t0 = time.time()
     statuses, failing = check.fetch_and_record(db, units, now) if units else ({}, set())
@@ -312,6 +312,7 @@ def main():
     overdue = bool(store.due_watches(db, now - timedelta(minutes=30)))
     checked, deferred, units, bad, sent, fetch_s, failing = check_and_alert(db, now, local, forced, searches)
     notices = health(db, now, local, failing, checked, worker_ok, os.environ.get("GITHUB_EVENT_NAME", ""), overdue)
+    store.prune(db, local.date())
     snaps = snapshots(db, now, local) if worker_ok else 0  # the workflow tells the Worker "done" once state is saved
     print(f"run #{runs}: commands={commands} watches_checked={checked} deferred={deferred} units={units} failed_units={bad} "
           f"failing_ops={len(failing)} worker_ok={worker_ok} messages={sent} notices={notices} snapshots={snaps} "

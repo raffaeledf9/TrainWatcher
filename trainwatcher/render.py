@@ -95,18 +95,18 @@ def italo_url(leg, d, passenger):
             f"&id=&{n}&chd=0&inf=0&pet=0&promo=&lang=it&startSearch=true")
 
 
-def book_rows(watch, lang, d=None):
+def book_rows(watch, lang, d=None, today=None):
     leg = watch.legs[0]
     row = []
-    if "I" in watch.operators and (u := italo_url(leg, d or leg.dates()[0], watch.passenger)):
+    d = d or max(leg.dates()[0], today or date.today())  # a past day would open an empty Italo search
+    if "I" in watch.operators and (u := italo_url(leg, d, watch.passenger)):
         row.append({"text": t(lang, "book_i"), "url": u})
     if "T" in watch.operators:
         row.append({"text": t(lang, "book_t"), "url": TRENITALIA_URL})
     return [row] if row else []
 
 
-def book_train(o, watch):
-    leg = watch.legs[0] if o.dep[:10] in [str(x) for x in watch.legs[0].dates()] else watch.legs[-1]
+def book_train(o, watch, leg):
     u = italo_url(leg, date.fromisoformat(o.dep[:10]), watch.passenger) if o.operator == ITALO else TRENITALIA_URL
     return {"text": f"🎫 {o.dep[11:16]} {short_train(o)}", "url": u or TRENITALIA_URL}
 
@@ -130,7 +130,8 @@ def _leg_block(view, leg, lang):
             o = view["other_fare"]
             lines.append(f"ℹ️ {t(lang, 'other_fare')}: {price(o.price, lang)} {escape(o.fare)}")
         return lines
-    lines.append(f"<b>{price(view['low'], lang)}</b> {t(lang, 'lowest')} · {len(view['ties'])} {t(lang, 'trains')}")
+    n = len(view["ties"])
+    lines.append(f"<b>{price(view['low'], lang)}</b> {t(lang, 'lowest')} · {n} {t(lang, 'trains' if n > 1 else 'train')}")
     lines += [train_line(o, lang, multi, leg) for o in view["ties"]]
     if view["others"]:
         lines += ["", f"<i>{t(lang, 'next_')}</i>"]
@@ -164,13 +165,14 @@ def status(watch, views, checked_at, lang, today=None, search=False, total=None,
     if stale_since:
         tail.append(t(lang, "stale", t=f"{stale_since:%H:%M}"))
     tail.append(f"🔄 {t(lang, 'live')}" if search else last_check(checked_at, lang))
-    kb = book_rows(watch, lang)
+    cheapest = views[0].get("ties") or [None]
+    kb = book_rows(watch, lang, cheapest[0] and date.fromisoformat(cheapest[0].dep[:10]), today)
     kb += [[{"text": t(lang, "watch_this"), "callback_data": f"wt:{search_id}"}]] if search else actions(watch, lang)
     return "\n".join(head + body + tail), kb
 
 
 # ---------- alerts (C layout + A details) ----------
-TITLES = {"drop": ("📉", "down"), "rise": ("📈", "up"), "under_max": ("✅", "under"), "back": ("🔁", "back"),
+TITLES = {"drop": ("📉", "down"), "rise": ("📈", "up"), "under_max": ("✅", "under"), "back": ("🔁", "back"), "on_sale": ("🆕", "on_sale"),
           "last_day": ("⏰", "last"), "still_on_sale": ("🍀", "still")}
 
 
@@ -185,7 +187,7 @@ def alert(watch, events, views, checked_at, lang, today=None):
             continue
         if watch.round_trip and e["kind"] in ("drop", "rise"):
             sections.append(_round_trip_alert(watch, e, views, lang, today))
-            trains += [v["ties"][0] for v in views if v.get("ties")]
+            trains += [(v.get("pair") or v["ties"][0], leg) for v, leg in zip(views, watch.legs) if v.get("pair") or v.get("ties")]
             continue
         icon, key = TITLES[e["kind"]]
         lines = [f"{icon} <b>{t(lang, key)}</b> · {escape(fare_label(watch, lang))}", f"{route(watch, lang)} · {watch_days(watch, lang, today)}", ""]
@@ -197,12 +199,12 @@ def alert(watch, events, views, checked_at, lang, today=None):
         lines.append("")
         lines += _notes(watch, e, lang)
         sections.append(lines)
-        trains += [o for o, _ in ties]
+        trains += ties
     seen, row = set(), []
-    for o in trains:
+    for o, leg in trains:
         if (o.train, o.dep) not in seen:
             seen.add((o.train, o.dep))
-            row.append(book_train(o, watch))
+            row.append(book_train(o, watch, leg))
     kb = [row[i:i + 3] for i in range(0, min(len(row), 6), 3)] + actions(watch, lang)
     return "\n\n".join("\n".join(s).strip() for s in sections), kb
 
