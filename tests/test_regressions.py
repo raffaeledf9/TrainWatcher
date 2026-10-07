@@ -11,7 +11,7 @@ from io import BytesIO
 from pathlib import Path
 from unittest import mock
 
-from trainwatcher import alerts, check, model, prices, render, run, schedule, store
+from trainwatcher import alerts, check, model, prices, render, run, schedule, stations, store
 from trainwatcher.charts import _merge
 from trainwatcher.offers import ITALO, TRENITALIA, Offer
 
@@ -223,6 +223,20 @@ class StateSize(unittest.TestCase):
         due[0].id, due[1].id = 1, 2
         take, _, deferred = schedule.plan(due, NOW, budget_s=1, first={2})
         self.assertEqual(([w.id for w in take], [w.id for w in deferred]), ([2], [1]))
+
+
+class OperatorsServeTheRoute(unittest.TestCase):
+    def test_a_watch_no_selected_operator_can_serve_is_refused(self):
+        keys = {e["k"] for e in stations.entries()}
+        p = {"v": 1, "from": "napoli-tutte", "to": "firenze-campo-di-marte", "out": {"d": ["2026-11-20"], "w": None}}
+        with self.assertRaises(model.Invalid):                          # Italo doesn't stop at Firenze Campo di Marte
+            model.from_payload(dict(p, ops=["I"]), 1, keys, date(2026, 10, 6))
+        self.assertEqual(model.from_payload(dict(p, ops=["T", "I"]), 1, keys, date(2026, 10, 6)).operators, ["T"])  # only who serves it
+        model.from_payload(dict(p, ops=["T"]), 1, keys, date(2026, 10, 6))
+        mixed = model.from_payload(dict(p, ops=["T", "I"], fares=["T:Base", "I:Economy"]), 1, keys, date(2026, 10, 6))
+        self.assertEqual(mixed.fares, ["T:Base"])                          # the Italo fare can't apply here: dropped
+        with self.assertRaises(model.Invalid):                             # nothing left to watch: refused
+            model.from_payload(dict(p, ops=["T", "I"], fares=["I:Economy"]), 1, keys, date(2026, 10, 6))
 
 
 class Charts(unittest.TestCase):

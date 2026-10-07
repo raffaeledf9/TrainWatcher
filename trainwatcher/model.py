@@ -4,6 +4,8 @@ import calendar
 from dataclasses import dataclass, field, asdict
 from datetime import date, time, timedelta
 
+from trainwatcher import stations
+
 PASSENGERS = ("adult", "young", "senior")
 OPERATORS = ("T", "I")
 CLASSES = ("Standard", "Premium", "Business", "Executive", "Smart", "Prima", "Club", "Salotto")
@@ -167,9 +169,17 @@ def _from_payload(p, user_id, station_keys, today):
     ops = p.get("ops", list(OPERATORS))
     if not isinstance(ops, list) or not ops or any(o not in OPERATORS for o in ops):
         raise Invalid("bad operators")
+    # only operators that stop at both ends: Italo serves 69 of the 183 stations; a watch nobody can serve stays empty
+    ops = [o for o in ops if stations.serves(p["from"], o) and stations.serves(p["to"], o)]
+    if not ops:
+        raise Invalid("no selected operator serves this route")
     mx = p.get("max")
     if mx is not None and (not isinstance(mx, (int, float)) or not 0 < mx < 10000):
         raise Invalid("bad max price")
+    if fares:  # fares of an operator that doesn't serve the route are dropped (the form doesn't offer them either)
+        fares = [f for f in fares if set(f.split(":")[0]) & set(ops)]
+        if not fares:
+            raise Invalid("fare not available for this trip")
     w = Watch(user_id=user_id, legs=legs, passenger=pax, fares=fares, classes=classes, operators=ops,
               max_price=float(mx) if mx is not None else None, rises=bool(p.get("rises")) and fares is None)
     for f in fares or ():  # fares that could never match would leave the watch silently empty forever

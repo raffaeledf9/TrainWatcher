@@ -98,7 +98,7 @@ const STR = {
     "review": "Review", "back": "Back", "create": "Create watch", "sending": "Sending…",
     "e_station": "Pick a station from the list", "e_same": "From and To must differ", "e_date": "Pick a future date", "e_far": "Too far ahead: tickets aren't on sale yet", "e_long": "Pick at most 92 days",
     "e_time": "The end time must not be before the start time", "e_ret": "Return must not be before the outbound", "e_fares": "Pick at least one fare",
-    "e_max": "Enter a price between 0 and 10,000 €", "e_pax": "not for this passenger",
+    "e_max": "Enter a price between 0 and 10,000 €", "e_pax": "not for this passenger", "e_ops": "The chosen operator doesn't stop at both stations",
     "noTg": "Open this form from the bot in Telegram: submitting only works there.", "noSt": "Could not load the station list.",
     "sendFail": "Could not reach the bot. Please try again."},
   "it": {"search": "Cerca", "watchT": "Monitora", "modeL": "Cerca o monitora", "from": "Da", "to": "A", "swap": "Inverti partenza e arrivo", "clear": "Cancella",
@@ -114,7 +114,7 @@ const STR = {
     "review": "Riepilogo", "back": "Indietro", "create": "Crea monitoraggio", "sending": "Invio…",
     "e_station": "Scegli una stazione dall'elenco", "e_same": "Partenza e arrivo devono essere diversi", "e_date": "Scegli una data futura", "e_far": "Troppo avanti: i biglietti non sono ancora in vendita", "e_long": "Scegli al massimo 92 giorni",
     "e_time": "L'orario finale non può precedere quello iniziale", "e_ret": "Il ritorno non può precedere l'andata", "e_fares": "Scegli almeno una tariffa",
-    "e_max": "Inserisci un prezzo tra 0 e 10.000 €", "e_pax": "non per questo passeggero",
+    "e_max": "Inserisci un prezzo tra 0 e 10.000 €", "e_pax": "non per questo passeggero", "e_ops": "L'operatore scelto non ferma in entrambe le stazioni",
     "noTg": "Apri questo modulo dal bot in Telegram: l'invio funziona solo lì.", "noSt": "Impossibile caricare l'elenco delle stazioni.",
     "sendFail": "Impossibile contattare il bot. Riprova."}
 };
@@ -165,7 +165,10 @@ const days = L => L.mode === "d1" ? [L.d1] : L.mode === "dM" ? [L.m] : L.dA === 
 const firstLast = L => L.mode === "dM" ? [L.m + "-01", monthEnd(L.m)] : [days(L)[0], days(L).at(-1)];
 const dayCount = L => { const [a, b] = firstLast(L); return (Date.parse(b) - Date.parse(a)) / 864e5 + 1; };
 const sameDay = () => S.trip === "round" && days(S.out).length === 1 && days(S.out)[0].length === 10 && days(S.ret).join() === days(S.out)[0];
-const fareShown = id => S.ops.some(o => id.split(":")[0].includes(o)) && (id !== SAME_DAY_FARE || sameDay());
+// operators that stop at both chosen stations (all chosen ones until both stations are picked)
+const serves = (k, o) => { const st = stations.find(x => x.k === k); return !!(st && (o === "T" ? st.t : st.i)); };
+const servedOps = () => S.from && S.to ? S.ops.filter(o => serves(S.from, o) && serves(S.to, o)) : S.ops;
+const fareShown = id => servedOps().some(o => id.split(":")[0].includes(o)) && (id !== SAME_DAY_FARE || sameDay());
 const fareOk = id => FARES[id] === null || FARES[id] === S.pax;
 const chosenFares = () => S.fares.filter(f => fareShown(f) && fareOk(f));
 const chosenCls = () => S.cls.filter(c => S.ops.some(o => CLASSES[o].includes(c)));
@@ -180,6 +183,8 @@ function validate() {
   if (!keys.has(S.from)) e.from = t("e_station");
   if (!keys.has(S.to)) e.to = t("e_station");
   else if (S.to === S.from) e.to = t("e_same");
+  // as the server: Italo stops at a third of the stations; a watch nobody can serve would stay empty forever
+  if (!e.from && !e.to && !servedOps().length) e.ops = t("e_ops");
   for (const k of legKeys()) {
     const L = S[k];
     if (firstLast(L)[1] < TODAY) e[k] = t("e_date");
@@ -413,6 +418,7 @@ function form() {
       popBtn("cls", t("class"), "🪑 " + (chosenCls().join(", ") || t("anyClass"))),
       open === "cls" && h("div", {class: "card span"}, classChips()),
       select(t("ops"), [["TI", "🚆 Trenitalia + Italo"], ["T", "🚆 Trenitalia"], ["I", "🚆 Italo"]], S.ops.join(""), v => { S.ops = v.split(""); }, isSearch ? "span" : ""),
+      err("ops", "span"),
       !isSearch && h("input", {type: "text", inputmode: "decimal", value: S.max, placeholder: "€ max (" + t("opt") + ")",
         "aria-label": t(S.trip === "round" ? "maxRT" : "max"), "aria-describedby": "e-max", oninput: e => { S.max = e.target.value; paintErrors(); }}),
       !isSearch && err("max", "span"),
