@@ -110,7 +110,8 @@ def book_rows(watch, lang, d=None, today=None):
 
 def book_train(o, watch, leg):
     u = italo_url(leg, date.fromisoformat(o.dep[:10]), watch.passenger) if o.operator == ITALO else TRENITALIA_URL
-    return {"text": f"🎫 {o.dep[11:16]} {short_train(o)}", "url": u or TRENITALIA_URL}
+    d = f"{o.dep[8:10]}/{o.dep[5:7]} " if len(leg.dates()) > 1 else ""  # the same train runs every day: say which
+    return {"text": f"🎫 {d}{o.dep[11:16]} {short_train(o)}", "url": u or TRENITALIA_URL}
 
 
 def actions(watch, lang):
@@ -234,13 +235,16 @@ def alert(watch, events, views, checked_at, lang, today=None):
         lines.append("")
         lines += _notes(watch, e, lang)
         sections.append(lines)
-        trains += ties[:MAX_TIES]
+        trains += ties if len(ties) <= MAX_TIES else []  # many: the general booking buttons below instead
     seen, row = set(), []
     for o, leg in trains:
         if (o.train, o.dep) not in seen:
             seen.add((o.train, o.dep))
             row.append(book_train(o, watch, leg))
-    kb = [row[i:i + 3] for i in range(0, min(len(row), 6), 3)] + actions(watch, lang)
+    if row:
+        kb = [row[i:i + 3] for i in range(0, min(len(row), 6), 3)] + actions(watch, lang)
+    else:
+        kb = book_rows(watch, lang, ties and date.fromisoformat(ties[0][0].dep[:10]), today) + actions(watch, lang)
     return "\n\n".join("\n".join(s).strip() for s in sections), kb
 
 

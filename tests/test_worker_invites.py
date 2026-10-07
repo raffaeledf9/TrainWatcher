@@ -95,6 +95,9 @@ class Invites(unittest.TestCase):
             {"from": 43, "name": "Luca", "text": "/start {code}"},  # 27 ...the new one works
             {"from": 1, "chat": -100, "type": "group", "text": "/list"},  # 28 groups: silence
             {"from": 1, "text": "/help"},                          # 29 the Owner's help lists /invite and /friends
+            {"from": 1, "cb": "fa:43"},                            # 30 the Owner allows Luca...
+            {"from": 1, "cb": "fa:43"},                            # 31 ...taps the old Allow again: nothing new
+            {"from": 1, "cb": "fd:43"},                            # 32 ...and Deny on the old request: that removes him
         ]
         first = self.run_steps(steps[:2])
         steps[26]["oldCode"] = first[1]["reply"]["text"].split("start=")[1].split()[0]
@@ -116,6 +119,7 @@ class Invites(unittest.TestCase):
         self.assertIn("can now use the bot", replies[6])
         self.assertIn([42, "allowed"], out[6]["users"])
         self.assertTrue(any(c["method"] == "setChatMenuButton" and c["body"]["chat_id"] == 42 for c in out[6]["calls"]))
+        self.assertIn(["lang", {"lang": "it"}], out[6]["queue"])     # their Telegram language becomes theirs here too
         self.assertIn("No watches yet", replies[7])
         self.assertEqual([o["status"] for o in out[8:21]], [200] * 12 + [429])
         self.assertIn("Mario Rossi (@mario) — allowed", replies[21])
@@ -129,6 +133,10 @@ class Invites(unittest.TestCase):
         self.assertIn("Request sent", replies[27])
         self.assertIsNone(replies[28])
         self.assertIn("/invite", replies[29])
+        self.assertEqual(sum(c["method"] == "sendMessage" and c["body"]["chat_id"] == 43 for c in out[30]["calls"]), 1)
+        self.assertFalse([c for c in out[31]["calls"] if c["body"].get("chat_id") == 43])  # no second welcome
+        self.assertIn([43, "removed"], out[32]["users"])
+        self.assertIn(["revoke", {"user_id": 43}], out[32]["queue"])                       # his watches stop too
 
 
 if __name__ == "__main__":

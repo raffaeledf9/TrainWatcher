@@ -87,7 +87,7 @@ const PRESETS = {any: null, morning: ["06:00", "12:00"], afternoon: ["12:00", "1
 const STR = {
   "en": {"search": "Search", "watchT": "Watch", "modeL": "Search or watch", "from": "From", "to": "To", "swap": "Swap From and To", "clear": "Clear",
     "trip": "Trip", "oneway": "One way", "round": "Round trip", "out": "Outbound", "ret": "Return", "date": "Date",
-    "days": "Days", "d1": "One day", "dW": "Week", "dM": "Month", "dN": "Custom", "pickStart": "Tap the first day", "pickEnd": "Now tap the last day",
+    "days": "Days", "d1": "One day", "dM": "Month", "dN": "Custom", "pickStart": "Tap the first day", "pickEnd": "Now tap the last day",
     "prevM": "Previous month", "nextM": "Next month", "same_day": "Same-day return: the A/R fare is included",
     "time": "Departure time", "any": "Any time", "morning": "Morning (6–12)", "afternoon": "Afternoon (12–18)", "evening": "Evening (18–24)", "custom": "Custom…",
     "tFrom": "Earliest departure", "tTo": "Latest departure",
@@ -103,7 +103,7 @@ const STR = {
     "sendFail": "Could not reach the bot. Please try again."},
   "it": {"search": "Cerca", "watchT": "Monitora", "modeL": "Cerca o monitora", "from": "Da", "to": "A", "swap": "Inverti partenza e arrivo", "clear": "Cancella",
     "trip": "Viaggio", "oneway": "Solo andata", "round": "Andata e ritorno", "out": "Andata", "ret": "Ritorno", "date": "Data",
-    "days": "Giorni", "d1": "Un giorno", "dW": "Settimana", "dM": "Mese", "dN": "Personalizzato", "pickStart": "Tocca il primo giorno", "pickEnd": "Ora tocca l’ultimo giorno",
+    "days": "Giorni", "d1": "Un giorno", "dM": "Mese", "dN": "Personalizzato", "pickStart": "Tocca il primo giorno", "pickEnd": "Ora tocca l’ultimo giorno",
     "prevM": "Mese precedente", "nextM": "Mese successivo", "same_day": "Ritorno in giornata: inclusa la tariffa A/R",
     "time": "Orario di partenza", "any": "Qualsiasi", "morning": "Mattina (6–12)", "afternoon": "Pomeriggio (12–18)", "evening": "Sera (18–24)", "custom": "Personalizzato…",
     "tFrom": "Partenza dalle", "tTo": "Partenza entro le",
@@ -304,7 +304,6 @@ function toggleCal(k) {
 
 function pickDay(L, s) {
   if (L.mode === "d1") { L.d1 = s; open = null; }
-  else if (L.mode === "dW") { L.dA = s; L.dB = addDays(s, 6) > LAST_DAY ? LAST_DAY : addDays(s, 6); open = null; }
   else if (!pickEnd) { L.dA = L.dB = s; pickEnd = true; }
   else { if (s < L.dA) [L.dA, L.dB] = [s, L.dA]; else L.dB = s; open = null; }
   render();
@@ -313,7 +312,7 @@ function pickDay(L, s) {
 function calendar(k) {
   const L = S[k];
   return h("div", {class: "cal span"},
-    seg(t("days"), [["d1", t("d1")], ["dW", t("dW")], ["dM", t("dM")], ["dN", t("dN")]], L.mode, v => { L.mode = v; pickEnd = false; }),
+    seg(t("days"), [["d1", t("d1")], ["dM", t("dM")], ["dN", t("dN")]], L.mode, v => { L.mode = v; pickEnd = false; }),
     L.mode === "dM" ? monthGrid(L) : dayGrid(L));
 }
 
@@ -330,14 +329,14 @@ function dayGrid(L) {
   const cells = Array.from({length: lead}, () => h("span"));
   for (let d = 1; d <= n; d++) {
     const s = `${view}-${pad(d)}`, on = L.mode === "d1" ? s === L.d1 : s === L.dA || s === L.dB;
-    cells.push(h("button", {type: "button", class: "day" + ((L.mode === "dN" || L.mode === "dW") && s > L.dA && s < L.dB ? " in" : ""), "aria-pressed": String(on),
+    cells.push(h("button", {type: "button", class: "day" + (L.mode === "dN" && s > L.dA && s < L.dB ? " in" : ""), "aria-pressed": String(on),
       "aria-label": fmt(s, {weekday: "long", day: "numeric", month: "long"}), disabled: s < TODAY || s > LAST_DAY, onclick: () => pickDay(L, s)}, String(d)));
   }
   const nav = step => h("button", {type: "button", "aria-label": t(step < 0 ? "prevM" : "nextM"),
     disabled: step < 0 ? view <= TODAY.slice(0, 7) : view >= LAST_DAY.slice(0, 7), onclick: () => { view = addMonths(view, step); render(); }}, step < 0 ? "‹" : "›");
   const wd = lang === "it" ? ["Lu", "Ma", "Me", "Gi", "Ve", "Sa", "Do"] : ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"];
   return [h("div", {class: "calh"}, nav(-1), h("b", {}, fmt(view + "-15", {month: "long", year: "numeric"})), nav(1)),
-    L.mode === "dN" || L.mode === "dW" ? h("div", {class: "hint c"}, t(pickEnd ? "pickEnd" : "pickStart")) : null,
+    L.mode === "dN" ? h("div", {class: "hint c"}, t(pickEnd ? "pickEnd" : "pickStart")) : null,
     h("div", {class: "calg"}, wd.map(w => h("span", {class: "wd", "aria-hidden": "true"}, w)), cells)];
 }
 

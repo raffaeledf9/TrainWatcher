@@ -139,17 +139,26 @@ async function joinRequest(env, msg, status) {
   return send(msg.chat.id, S.req_sent);
 }
 
-// fa: allow (also again after a removal), fd: decline, fr: remove (the job stops their watches)
+// fa: allow (also again after a removal), fd: decline, fr: remove (the job stops their watches). Buttons of old
+// messages can be tapped again: a decision already taken changes nothing, and declining someone already allowed
+// (an old request message) is a removal, so their watches stop too.
 async function decideFriend(env, ctx, origin, act, arg, chat, mid, S) {
-  const row = await env.DB.prepare("SELECT id, name, lang FROM users WHERE id = ?1").bind(Number(arg)).first();
+  const row = await env.DB.prepare("SELECT id, name, lang, status FROM users WHERE id = ?1").bind(Number(arg)).first();
   if (!row) return new Response("ok");
-  const status = { fa: "allowed", fd: "denied", fr: "removed" }[act];
-  await env.DB.prepare("UPDATE users SET status = ?1, decided_at = ?2 WHERE id = ?3").bind(status, Date.now(), row.id).run();
+  let status = { fa: "allowed", fd: "denied", fr: "removed" }[act];
+  if (status === "denied" && row.status === "allowed") status = "removed";
+  const changed = status !== row.status;
+  if (changed) await env.DB.prepare("UPDATE users SET status = ?1, decided_at = ?2 WHERE id = ?3").bind(status, Date.now(), row.id).run();
   const F = await strings(env, (await snap(env, `${row.id}:lang`)) || row.lang || "en");
-  if (status === "allowed") {
+  if (!changed) {
+    // nothing to do
+  } else if (status === "allowed") {
+    const lang = row.lang || "en";  // their Telegram language until they pick one: the job writes to them in it too
+    await putSnap(env, `${row.id}:lang`, row.id, lang);
+    await enqueue(env, row.id, "lang", { lang });
     await tg(env, "sendMessage", { chat_id: row.id, text: F.allowed_friend + "\n\n" + F.lang_q, reply_markup: { inline_keyboard: langKb(row.lang) } });
     await menu(env, origin, row.id, row.lang || "en");
-  } else if (status === "removed") {
+  } else if (status === "removed" && row.status === "allowed") {
     await enqueue(env, Number(env.OWNER_CHAT_ID), "revoke", { user_id: row.id });
     ctx.waitUntil(dispatch(env, "command"));
     await tg(env, "sendMessage", { chat_id: row.id, text: F.removed_friend });
