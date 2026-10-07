@@ -40,5 +40,4 @@ class SearchResult:
     status: str
     offers: list = field(default_factory=list)
     requests: int = 0       # HTTP requests spent (for the run budget)
-    seconds: float = 0.0    # wall time
     detail: str = ""        # short, log-safe reason for non-OK statuses (no routes, prices or ids)
