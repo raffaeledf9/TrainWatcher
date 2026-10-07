@@ -84,8 +84,8 @@ def parse(solutions, day, start="00:00", end=LATE):
         for grid in s.get("grids") or ():
             for service in grid["services"]:
                 for o in service["offers"]:
-                    if o.get("status") != "SALEABLE" or not o.get("price"):
-                        continue
+                    if o.get("status") != "SALEABLE" or not o.get("price") or float(o["price"]["amount"]) <= 0:
+                        continue  # a price of 0 would be a data glitch, and a false "new low" alert
                     offers.append(Offer(
                         TRENITALIA, train["name"], train["acronym"], dep, sol["arrivalTime"][:16],
                         sol["origin"], sol["destination"], service["name"].title(), FARES.get(o["name"], o["name"]),

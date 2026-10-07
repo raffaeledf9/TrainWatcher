@@ -117,7 +117,7 @@ _REASONS_IT = {
     "fare not available for this trip": "tariffa non disponibile per questo viaggio",
     "origin and destination are the same": "partenza e arrivo coincidono", "return before outbound": "il ritorno precede l'andata",
     "time window ends before it starts": "la fascia oraria finisce prima di iniziare", "unknown class": "classe sconosciuta",
-    "unknown fare": "tariffa sconosciuta", "unknown station": "stazione sconosciuta", "unsupported form version": "versione del modulo non supportata",
+    "unknown fare": "tariffa sconosciuta", "no selected operator serves this route": "nessun operatore scelto serve questa tratta", "unknown station": "stazione sconosciuta", "unsupported form version": "versione del modulo non supportata",
 }
 
 

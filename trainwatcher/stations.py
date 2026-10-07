@@ -47,6 +47,12 @@ def abbreviation(entry):
     return entry["a"]
 
 
+def serves(key, op):
+    """True if operator op ("T" or "I") stops at the catalogue entry key."""
+    e = _index().get(key) or {}
+    return bool(e.get("t" if op == "T" else "i"))
+
+
 def display_name(raw):
     """Name of a station as an operator returns it in results: Italo gives codes (MC_), Trenitalia names."""
     return next((e["n"] for e in entries() if e.get("i") == raw and not e.get("g")), raw)

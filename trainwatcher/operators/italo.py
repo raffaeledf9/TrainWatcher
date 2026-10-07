@@ -184,8 +184,8 @@ def parse(trip, day, window=None):
         if dep[:10] != day or not start <= dep[11:] <= end:
             continue
         for f in seg["fares"]:
-            if f.get("availableCount") == 0:
-                continue
+            if f.get("availableCount") == 0 or float(f["paxFares"][0]["singlePaxFarePrice"]) <= 0:
+                continue  # sold out, or a price of 0 (a data glitch, and a false "new low" alert)
             offers.append(Offer(
                 ITALO, seg["trainNumber"], "IT", dep, seg["sta"][:16], seg["departureStation"], seg["arrivalStation"],
                 CLASSES.get(f["productClass"], f["productClass"]), f["offerType"],
