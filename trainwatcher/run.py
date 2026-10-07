@@ -295,7 +295,7 @@ def snapshots(db, now, local):
             "job_dead", "recovered", "dispatch_fail", "no_chart", "req_sent", "req_wait", "req_new", "btn_allow", "btn_deny",
             "btn_remove", "btn_readd", "allowed_owner", "denied_owner", "removed_owner", "allowed_friend", "removed_friend",
             "invite_text", "invite_reset", "friends_t", "friends_empty", "st_pending", "st_allowed", "st_denied", "st_removed",
-            "help_owner", "rate_limited")})})
+            "help_owner", "rate_limited", "try_again")})})
     rows.append({"key": "next_due", "user_id": 0, "body": json.dumps(next_due(db))})  # the Worker starts the next run then
     for i in range(0, len(rows), 50):
         worker("/job/snapshot", {"rows": rows[i:i + 50]})
