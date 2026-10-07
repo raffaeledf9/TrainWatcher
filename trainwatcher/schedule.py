@@ -1,5 +1,5 @@
 """When each Watch is Checked and what one Run fetches (map decision "Run budget and check cadence")."""
-from datetime import date, datetime, timedelta
+from datetime import datetime, timedelta
 
 RUN_FETCH_BUDGET_S = 180          # seconds of fetching per Run
 RUNS_PER_HOUR = 12                # one Run every 5 minutes
