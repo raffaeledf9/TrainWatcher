@@ -136,14 +136,25 @@ def record(db, unit, offers, now):
     return changed, vanished
 
 
-def prune(db, today):
-    """Forget the current offers of days already past (never read again) and compact the file. -> units dropped."""
-    old = [u for (u,) in db.execute("SELECT DISTINCT unit FROM offers_last") if u.split("|")[3] < str(today)]
-    if old:
-        db.executemany("DELETE FROM offers_last WHERE unit = ?", [(u,) for u in old])
-        db.commit()
+def prune(db, today, search_days=7):
+    """Forget what is never read again, once a day, and compact the file: current offers and price history of days
+    already past (a finished watch keeps its last chart in the Worker), and searches whose "Watch this" is older than
+    search_days. A one-month search alone records ~50,000 history rows: kept, they'd outgrow GitHub's file limit.
+    -> rows dropped."""
+    if meta_get(db, "pruned_on") == str(today):
+        return 0
+    day = lambda key: key.split("|")[3]
+    old_units = [u for (u,) in db.execute("SELECT DISTINCT unit FROM offers_last") if day(u) < str(today)]
+    old_keys = [k for (k,) in db.execute("SELECT DISTINCT key FROM observations") if day(k) < str(today)]
+    cutoff = int(datetime.combine(today, datetime.min.time()).timestamp()) - search_days * 86400
+    old_searches = [k for (k,) in db.execute("SELECT k FROM meta WHERE k LIKE 'search:%'") if int(k[7:17]) < cutoff]
+    db.executemany("DELETE FROM offers_last WHERE unit = ?", [(u,) for u in old_units])
+    db.executemany("DELETE FROM observations WHERE key = ?", [(k,) for k in old_keys])
+    db.executemany("DELETE FROM meta WHERE k = ?", [(k,) for k in old_searches])
+    meta_set(db, "pruned_on", today)  # commits
+    if old_units or old_keys or old_searches:
         db.execute("VACUUM")
-    return len(old)
+    return len(old_units) + len(old_keys) + len(old_searches)
 
 
 def current_offers(db, unit):

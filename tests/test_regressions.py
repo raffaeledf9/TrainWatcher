@@ -215,8 +215,23 @@ class StateSize(unittest.TestCase):
         o = Offer(ITALO, "9967", "IT", "2026-11-10T06:15", "2026-11-10T09:24", "MC_", "RMT", "Smart", "Economy", 29.9)
         for day in (date(2026, 11, 9), date(2026, 11, 10)):
             store.record(db, ("I", "a", "b", day, "adult", None), [o], NOW)
-        self.assertEqual(store.prune(db, date(2026, 11, 10)), 1)
+        self.assertEqual(store.prune(db, date(2026, 11, 10)), 2)        # its current offer and its history row
         self.assertEqual(db.execute("SELECT COUNT(*) FROM offers_last").fetchone()[0], 1)
+        self.assertEqual(store.prune(db, date(2026, 11, 10)), 0)        # once a day
+
+    def test_history_and_old_searches_of_past_days_are_pruned(self):
+        db = store.connect(":memory:")
+        self.addCleanup(db.close)
+        o = Offer(ITALO, "9967", "IT", "2026-11-10T06:15", "2026-11-10T09:24", "MC_", "RMT", "Smart", "Economy", 29.9)
+        old, new = ("I", "a", "b", date(2026, 11, 9), "adult", None), ("I", "a", "b", date(2026, 11, 12), "adult", None)
+        for u in (old, new):
+            store.record(db, u, [o], NOW)
+        store.meta_set(db, "search:17600000000", "{}")         # a search from 2025: its "Watch this" is long dead
+        store.meta_set(db, f"search:{int(datetime(2026, 11, 9).timestamp())}0", "{}")
+        store.prune(db, date(2026, 11, 10))
+        keys = [r[0] for r in db.execute("SELECT key FROM observations")]
+        self.assertEqual([k.split("|")[3] for k in keys], ["2026-11-12"])  # history of a past day goes with its offers
+        self.assertEqual([r[0] for r in db.execute("SELECT k FROM meta WHERE k LIKE 'search:%'")], [f"search:{int(datetime(2026, 11, 9).timestamp())}0"])
 
     def test_what_the_owner_waits_for_is_never_postponed(self):
         due = [watch(), watch(out={"d": ["2026-11"], "w": None})]
