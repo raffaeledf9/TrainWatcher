@@ -55,3 +55,8 @@ jobs:
             sleep $((i * 10))
           done
           exit 1
+      - name: Report done
+        # only now does the run count as done for the Worker's dead-man switch (it messages the Owner after 30 min
+        # without one); a dead Worker is reported by the job itself, so don't fail the run over it
+        run: |
+          curl -fsS -m 30 -X POST -H "Authorization: Bearer $WORKER_SECRET" "$WORKER_URL/job/done" -o /dev/null || echo "worker unreachable"

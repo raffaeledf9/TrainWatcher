@@ -262,9 +262,7 @@ def main():
             store.set_status(db, w.id, "past")
     checked, deferred, units, bad, sent, fetch_s, failing = check_and_alert(db, now, local, forced, searches)
     notices = health(db, now, local, failing, checked, worker_ok, os.environ.get("GITHUB_EVENT_NAME", ""))
-    snaps = snapshots(db, now, local) if worker_ok else 0
-    if worker_ok:
-        try_worker("/job/done", {"bad_units": bad})
+    snaps = snapshots(db, now, local) if worker_ok else 0  # the workflow tells the Worker "done" once state is saved
     print(f"run #{runs}: commands={commands} watches_checked={checked} deferred={deferred} units={units} failed_units={bad} "
           f"failing_ops={len(failing)} worker_ok={worker_ok} messages={sent} notices={notices} snapshots={snaps} "
           f"fetch={fetch_s:.1f}s total={time.time() - t0:.1f}s")
