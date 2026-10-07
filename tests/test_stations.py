@@ -30,7 +30,7 @@ class StationsTest(unittest.TestCase):
     def test_frecce_destinations_outside_gtfs_window_but_no_coach_stops(self):
         self.assertEqual(self.ids("bergamo"), {TRENITALIA: 830001529})
         self.assertEqual(self.ids("fiumicino-aeroporto"), {TRENITALIA: 830008412})
-        self.assertEqual(stations.search("cortina") + stations.search("courmayeur"), [])
+        self.assertFalse([e for e in stations.entries() if e["n"].lower().startswith(("cortina", "courmayeur"))])
 
     def test_keys_unique_and_abbreviations_present(self):
         es = stations.entries()
@@ -41,9 +41,9 @@ class StationsTest(unittest.TestCase):
                           ("milano-tutte", "milano-centrale", "milano-rogoredo")}, {"MIL"})
         self.assertNotEqual(stations.by_key("reggio-emilia")["a"], stations.by_key("reggio-calabria")["a"])
 
-    def test_search_is_for_tools_only(self):
-        self.assertIn("roma-termini", [e["k"] for e in stations.search("term")])
-        self.assertEqual([e["k"] for e in stations.search("FORLI")], ["forli"])
+    def test_names_and_keys(self):
+        self.assertEqual(stations.by_key("roma-termini")["n"], "Roma Termini")
+        self.assertEqual(stations.by_key("forli")["n"], "Forlì")
         with self.assertRaises(KeyError):
             stations.by_key("Milano Centrale")
 

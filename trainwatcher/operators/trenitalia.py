@@ -21,7 +21,7 @@ def search(origin_id, dest_id, day, window=None, ar_return=None):
     ar_return="HH:MM" sends a same-day returnDepartureTime: "A/R IN GIORNATA" offers then appear too,
     marked same_day_ar=True. Status EMPTY = valid answer with nothing on sale (no trains, or all sold out)."""
     day, (start, end) = str(day), window or ("00:00", LATE)
-    t0, res = time.monotonic(), SearchResult(OK)
+    res = SearchResult(OK)
     body = {"departureLocationId": int(origin_id), "arrivalLocationId": int(dest_id),
             "departureTime": f"{day}T{start}:00.000", "adults": 1, "children": 0,
             "criteria": {"frecceOnly": True, "regionalOnly": False, "noChanges": True,
@@ -54,7 +54,6 @@ def search(origin_id, dest_id, day, window=None, ar_return=None):
         res.offers = []  # never hand out a partial day as if it were complete
     elif not res.offers:
         res.status = EMPTY
-    res.seconds = round(time.monotonic() - t0, 2)
     return res
 
 

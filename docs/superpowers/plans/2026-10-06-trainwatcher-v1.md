@@ -18,7 +18,7 @@
 trainwatcher/            Python job
   operators/trenitalia.py, operators/italo.py
   stations.py  model.py  store.py  schedule.py  alerts.py
-  render.py  i18n.py  charts.py  queue.py  run.py  smoke.py
+  render.py  i18n.py  charts.py  queue.py  run.py
 worker/                  Cloudflare Worker: src/index.js, schema.sql, wrangler.toml
 webapp/                  Mini App: index.html, stations.json  (GitHub Pages)
 scripts/                 build_stations.py, secret_scan.py, setup.py
@@ -81,7 +81,7 @@ Tickets: Trenitalia full-day cost; Italo session limits; Same-day A/R; Young/sen
 - **Shared:**
   - concurrency of 5 (Trenitalia) and 3 (Italo), halved on 403/429;
   - classify each result as OK / EMPTY / BLOCKED / BROKEN, with the canary route.
-- **Checks:** parser tests on captured fixtures; `python -m trainwatcher.smoke` succeeds on both operators from a GitHub run.
+- **Checks:** parser tests on captured fixtures; live searches succeed on both operators from a GitHub run (the canary search in `check.py` now does this at every check).
 
 ## R3 — Station catalogue
 

@@ -96,12 +96,6 @@ def set_status(db, watch_id, status):
     db.commit()
 
 
-def forget(db, watch_id):
-    """/forget: the watch disappears; offer history stays (it is shared by route, not owned by a watch)."""
-    db.execute("DELETE FROM watches WHERE id = ?", (watch_id,))
-    db.commit()
-
-
 # ---------- offers and history ----------
 def unit_id(unit):
     op, a, b, day, pax, ret = unit

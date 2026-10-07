@@ -46,17 +46,15 @@ class Session:
     def search(self, origin, dest, day, window=None, passenger="adult"):
         """One-way Offers of direct trains departing on `day`; one call covers the whole day and
         window=("HH:MM", "HH:MM") filters departures. passenger: adult | young | senior."""
-        t0 = time.monotonic()
         verdict, detail, data, n = self._run(_body(origin, dest, day, None, passenger))
-        return _result(verdict, detail, data, "forward", str(day), window, n, t0)
+        return _result(verdict, detail, data, "forward", str(day), window, n)
 
     def round_trip(self, origin, dest, day, return_day, passenger="adult"):
         """(forward, backward) results of one round-trip search. When return_day == day both directions carry the
         "Andata e Ritorno" fare (same_day_ar=True). The request cost is booked on the forward result."""
-        t0 = time.monotonic()
         verdict, detail, data, n = self._run(_body(origin, dest, day, return_day, passenger))
-        return (_result(verdict, detail, data, "forward", str(day), None, n, t0),
-                _result(verdict, detail, data, "backward", str(return_day), None, 0, t0))
+        return (_result(verdict, detail, data, "forward", str(day), None, n),
+                _result(verdict, detail, data, "backward", str(return_day), None, 0))
 
     def _run(self, body):
         """One booking search, retried once on a fresh login after a 401. -> (verdict, detail, data, requests)."""
@@ -156,8 +154,8 @@ def _body(origin, dest, day, return_day, passenger):
     return body
 
 
-def _result(verdict, detail, data, direction, day, window, requests, t0):
-    res = SearchResult(verdict, requests=requests, seconds=round(time.monotonic() - t0, 2), detail=detail)
+def _result(verdict, detail, data, direction, day, window, requests):
+    res = SearchResult(verdict, requests=requests, detail=detail)
     if verdict != OK:
         return res
     try:

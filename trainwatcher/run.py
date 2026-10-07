@@ -291,7 +291,7 @@ def snapshots(db, now, local):
         # from this run's possibly older copy would undo a choice made while the run was working
     for lang in (i18n.EN, i18n.IT):
         rows.append({"key": f"strings:{lang}", "user_id": 0, "body": json.dumps({k: i18n.S[lang][k] for k in (
-            "welcome", "lang_q", "lang_set", "ack", "deleted", "kept", "help", "list_empty", "past_empty", "del_yes", "del_no",
+            "welcome", "lang_q", "lang_set", "ack", "deleted", "kept", "help", "list_empty", "past_empty",
             "job_dead", "recovered", "dispatch_fail", "no_chart", "req_sent", "req_wait", "req_new", "btn_allow", "btn_deny",
             "btn_remove", "btn_readd", "allowed_owner", "denied_owner", "removed_owner", "allowed_friend", "removed_friend",
             "invite_text", "invite_reset", "friends_t", "friends_empty", "st_pending", "st_allowed", "st_denied", "st_removed",

@@ -6,7 +6,7 @@ const MIN = 60_000;
 // Fallback strings until the job has published strings:<lang> to D1 (the job's i18n.py is the source of truth).
 const FALLBACK = { ack: "⏳ Got it — checking prices, results in about a minute.", list_empty: "No watches yet.", past_empty: "No past watches yet.",
   welcome: "Welcome to TrainWatcher 👋", lang_q: "Choose your language:", help: "/list · /past · /language", deleted: "🗑 Watch {n} deleted.",
-  kept: "↩️ Watch {n} kept.", del_yes: "✅ Delete", del_no: "↩️ Keep", lang_set: "OK",
+  kept: "↩️ Watch {n} kept.", lang_set: "OK",
   job_dead: "⚠️ Price checks have stopped finishing.", recovered: "✅ Price checks are working again.",
   dispatch_fail: "⚠️ GitHub refused to start a price check: the GitHub token has probably expired.", no_chart: "📈 No price history yet.",
   req_sent: "📨 Request sent. You'll get a message here once it's approved.", req_wait: "⏳ Your request is still waiting for approval.",
@@ -353,12 +353,6 @@ async function jobApi(req, env, path) {
       "ON CONFLICT(key) DO UPDATE SET updated_at = ?3, body = ?4");
     if (rows && rows.length) await env.DB.batch(rows.map((r) => stmt.bind(r.key, r.user_id, now, r.body)));
     return Response.json({ ok: true, n: (rows || []).length });
-  }
-  if (path === "/job/enqueue" && req.method === "POST") {   // tooling/tests: queue a command as if it came from Telegram
-    const { user_id, kind, payload, dispatch: now } = await req.json();
-    await enqueue(env, user_id, kind, payload || {});
-    if (now) await dispatch(env, "enqueue");
-    return Response.json({ ok: true });
   }
   if (path === "/job/done" && req.method === "POST") {
     await env.DB.batch([

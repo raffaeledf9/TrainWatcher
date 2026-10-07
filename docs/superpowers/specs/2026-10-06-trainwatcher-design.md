@@ -156,7 +156,7 @@ Single-line commands, because each message costs a run:
 
 - `unittest`, stdlib only. Fixtures are real JSON responses captured on 2026-10-06 (secrets stripped).
 - Covered: both parsers, command parser, alert diffing, cadence.
-- `python -m trainwatcher.smoke` runs one live search per operator (also used in CI on demand).
+- A canary search per operator (Milano C.le → Roma Termini, about 5 weeks ahead) runs whenever results look suspicious (`check.canary`).
 
 ## One-time setup (user)
 
