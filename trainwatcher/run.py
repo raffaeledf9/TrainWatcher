@@ -68,6 +68,8 @@ def telegram(method, **params):
 
 def send(user_id, text_kb, now_local, silent=None):
     text, kb = text_kb
+    if len(text) > 4000:  # Telegram rejects anything over 4096: rather a cut message than none
+        text = text[:text.rfind("\n", 0, 3900)] + "\n…"
     telegram("sendMessage", chat_id=user_id, text=text, parse_mode="HTML", disable_web_page_preview=True,
              disable_notification=alerts.silent(now_local) if silent is None else silent,
              **({"reply_markup": {"inline_keyboard": kb}} if kb else {}))
@@ -82,12 +84,13 @@ def handle(db, item, now, local, forced, searches):
     uid, kind, p = item["user_id"], item["kind"], json.loads(item["payload"] or "{}")
     lang = lang_of(db, uid)
     if kind == "lang":
-        store.set_user_lang(db, uid, p["lang"], now)
+        if p.get("lang") in (i18n.EN, i18n.IT):  # an unknown language would break every message to this user
+            store.set_user_lang(db, uid, p["lang"], now)
     elif kind == "form":
         try:
             w = model.from_payload(p.get("data"), uid, {e["k"] for e in stations.entries()}, local.date())
         except model.Invalid as e:
-            send(uid, (i18n.t(lang, "invalid", why=str(e)), []), local, silent=False)
+            send(uid, (i18n.t(lang, "invalid", why=i18n.reason(lang, str(e))), []), local, silent=False)
             return
         if p.get("mode") == "search":
             searches.append(w)
@@ -301,7 +304,10 @@ def main():
         if not items:
             break
         for it in items:
-            handle(db, it, now, local, forced, searches)
+            try:
+                handle(db, it, now, local, forced, searches)
+            except Exception as e:  # one bad command must not crash every run: it would be offered again and again
+                print("command failed", it.get("kind"), type(e).__name__)
         commands += len(items)
         if try_worker("/job/ack", {"ids": [it["id"] for it in items]}) is None:
             worker_ok = False
@@ -319,6 +325,7 @@ def main():
           f"fetch={fetch_s:.1f}s total={time.time() - t0:.1f}s")
     if run_number:
         store.meta_set(db, "last_ok_run", run_number)
+    db.close()
     return 0
 
 
