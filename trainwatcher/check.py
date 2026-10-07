@@ -105,12 +105,25 @@ def live_ok(watch, statuses, since=None):
     return all(statuses.get(u) in (OK, EMPTY, NA) for u in units) and any(statuses.get(u) in (OK, EMPTY) for u in units)
 
 
-def views(watch, db, top=5, since=None):
+def split_months(watch, since):
+    """Months a status view is sent in, one message each: only when a leg's own days span several months (a custom
+    period); else [None], one message (a round trip from 30 Nov to 2 Dec stays together)."""
+    month_sets = [{str(d)[:7] for d in leg.upcoming(since)} for leg in watch.legs]
+    if not any(len(m) > 1 for m in month_sets):
+        return [None]
+    return sorted(set().union(*month_sets))
+
+
+def views(watch, db, top=5, since=None, month=None):
     """[view per leg], lowest (watch-level), legs ({out, ret} for round trips) from the stored current offers
-    of the days from `since` on."""
+    of the days from `since` on; with month ("YYYY-MM") only that month, and None for a leg without days in it."""
     out = []
     for i, leg in enumerate(watch.legs):
-        offers = [Offer(**d) for u in record_units(watch, i, since) for d in store.current_offers(db, u)]
+        units = [u for u in record_units(watch, i, since) if month is None or str(u[3])[:7] == month]
+        if month is not None and not units:
+            out.append(None)
+            continue
+        offers = [Offer(**d) for u in units for d in store.current_offers(db, u)]
         matching = [o for o in offers if prices.matches(o, watch, leg)]
         low, ties, others = prices.ranking(matching, top)
         v = {"low": low, "ties": ties, "others": others, "matching": matching, "other_fare": None}
@@ -120,7 +133,9 @@ def views(watch, db, top=5, since=None):
             v["other_fare"] = min(alt, key=lambda o: o.price) if alt else None
         out.append(v)
     if not watch.round_trip:
-        return out, out[0]["low"], None, None
+        return out, out[0] and out[0]["low"], None, None
+    if None in out:
+        return out, None, None, None
     total, a, b = prices.round_trip_total(out[0]["matching"], out[1]["matching"])
     out[0]["pair"], out[1]["pair"] = a, b  # the two trains that make the total
     return out, total, {"out": a and a.price, "ret": b and b.price}, total

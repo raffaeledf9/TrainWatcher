@@ -8,7 +8,14 @@ const FALLBACK = { ack: "⏳ Got it — checking prices, results in about a minu
   welcome: "Welcome to TrainWatcher 👋", lang_q: "Choose your language:", help: "/list · /past · /language", deleted: "🗑 Watch {n} deleted.",
   kept: "↩️ Watch {n} kept.", del_yes: "✅ Delete", del_no: "↩️ Keep", lang_set: "OK",
   job_dead: "⚠️ Price checks have stopped finishing.", recovered: "✅ Price checks are working again.",
-  dispatch_fail: "⚠️ GitHub refused to start a price check: the GitHub token has probably expired.", no_chart: "📈 No price history yet." };
+  dispatch_fail: "⚠️ GitHub refused to start a price check: the GitHub token has probably expired.", no_chart: "📈 No price history yet.",
+  req_sent: "📨 Request sent. You'll get a message here once it's approved.", req_wait: "⏳ Your request is still waiting for approval.",
+  req_new: "👤 <b>Access request</b>\n{who}", btn_allow: "✅ Allow", btn_deny: "❌ Deny", btn_remove: "🚫 Remove {name}",
+  btn_readd: "✅ Allow {name} again", allowed_owner: "✅ {name} can now use the bot.", denied_owner: "❌ {name} declined.",
+  removed_owner: "🚫 {name} removed; their watches are stopped.", allowed_friend: "✅ You're in!", removed_friend: "Your access to TrainWatcher has ended.",
+  invite_text: "🔗 Invite link:\n{link}", invite_reset: "🔄 New invite link (the old one no longer works):\n{link}", friends_t: "👥 Friends",
+  friends_empty: "No friends yet: share the link from /invite.", st_pending: "waiting", st_allowed: "allowed", st_denied: "declined",
+  st_removed: "removed", help_owner: "/invite · /friends", rate_limited: "⏳ Too many requests in the last hour: try again later." };
 
 export default {
   async fetch(req, env, ctx) {
@@ -38,42 +45,49 @@ export default {
 };
 
 // ---------- Telegram webhook ----------
+// Who may use the bot: the Owner, and friends the Owner allowed after they opened the one invite link
+// (users.status: pending | allowed | denied | removed). Everyone else gets silence. Private chats only.
 async function telegram(req, env, ctx) {
   if (!safeEqual(req.headers.get("X-Telegram-Bot-Api-Secret-Token") || "", env.TG_SECRET)) return new Response("ok");
   const u = await req.json();
   const msg = u.message, cb = u.callback_query;
   const from = (msg && msg.from) || (cb && cb.from);
-  if (!from || String(from.id) !== String(env.OWNER_CHAT_ID)) return new Response("ok"); // owner lock (v1)
-  const uid = from.id, origin = new URL(req.url).origin;
+  const chatType = msg ? msg.chat.type : cb && cb.message ? cb.message.chat.type : "private";
+  if (!from || chatType !== "private") return new Response("ok");
+  const uid = from.id, origin = new URL(req.url).origin, role = await roleOf(env, uid);
+  if (role !== "owner" && role !== "allowed") return msg && typeof msg.text === "string" ? await joinRequest(env, msg, role) : new Response("ok");
+  const owner = role === "owner";
   const lang = (await snap(env, `${uid}:lang`)) || (from.language_code === "it" ? "it" : "en");
-  const S = { ...FALLBACK, ...((await snap(env, `strings:${lang}`)) || {}) };
+  const S = await strings(env, lang);
 
   if (msg && typeof msg.text === "string") {
-    const chat = msg.chat.id, cmd = msg.text.trim().split(/\s+/)[0].toLowerCase().replace(/@.*$/, "");
+    const chat = msg.chat.id, [word, arg] = msg.text.trim().split(/\s+/), cmd = word.toLowerCase().replace(/@.*$/, "");
     if (cmd === "/start") {
       if (!(await snap(env, `${uid}:lang`))) return langPrompt(chat, S, from.language_code);
       ctx.waitUntil(menu(env, origin, chat, lang));
       return send(chat, S.welcome);
     }
     if (cmd === "/language") return langPrompt(chat, S, lang);
-    if (cmd === "/list") return fromSnapshot(chat, await snap(env, `${uid}:list`), S.list_empty);
-    if (cmd === "/past") return fromSnapshot(chat, await snap(env, `${uid}:past`), S.past_empty);
-    if (cmd === "/help") return send(chat, S.help);
-    return send(chat, S.help);
+    if (cmd === "/list") return fromSnapshot(env, chat, await snap(env, `${uid}:list`), S.list_empty);
+    if (cmd === "/past") return fromSnapshot(env, chat, await snap(env, `${uid}:past`), S.past_empty);
+    if (owner && cmd === "/invite") return await invite(env, chat, S, arg === "reset");
+    if (owner && cmd === "/friends") return await friends(env, chat, S);
+    return send(chat, S.help + (owner ? "\n" + S.help_owner : ""));
   }
 
   if (cb) {
     const chat = cb.message.chat.id, mid = cb.message.message_id;
     const [act, arg] = String(cb.data || "").split(":");
     await tg(env, "answerCallbackQuery", { callback_query_id: cb.id }); // stop the spinner at once
-    if (act === "st") return fromSnapshot(chat, await snap(env, `${uid}:status:${arg}`), S.list_empty);
+    if (owner && ["fa", "fd", "fr"].includes(act)) return await decideFriend(env, ctx, origin, act, arg, chat, mid, S);
+    if (act === "st") return fromSnapshot(env, chat, await snap(env, `${uid}:status:${arg}`), S.list_empty);
     if (act === "hi") {
       const c = await snap(env, `${uid}:chart:${arg}`);
       if (!c) return send(chat, S.no_chart);
       await sendPhoto(env, chat, c.png);
       return new Response("ok");
     }
-    if (act === "de") return fromSnapshot(chat, await snap(env, `${uid}:delete:${arg}`), S.list_empty);
+    if (act === "de") return fromSnapshot(env, chat, await snap(env, `${uid}:delete:${arg}`), S.list_empty);
     if (act === "dn" || act === "dy") {
       const d = await snap(env, `${uid}:delete:${arg}`);
       if (act === "dy") { await enqueue(env, uid, "callback", { data: cb.data }); ctx.waitUntil(dispatch(env, "command")); }
@@ -84,15 +98,103 @@ async function telegram(req, env, ctx) {
       await putSnap(env, `${uid}:lang`, uid, arg);
       await enqueue(env, uid, "lang", { lang: arg });
       ctx.waitUntil(menu(env, origin, chat, arg));
-      const S2 = { ...FALLBACK, ...((await snap(env, `strings:${arg}`)) || {}) };
+      const S2 = await strings(env, arg);
       return Response.json({ method: "editMessageText", chat_id: chat, message_id: mid, text: S2.lang_set + "\n\n" + S2.welcome });
     }
     // nw (check now), wt (watch this) and anything else: the job does it; answer at once that it's coming
+    if (!owner && (act === "nw" || act === "wt") && (await overLimit(env, uid))) return send(chat, S.rate_limited);
     await enqueue(env, uid, "callback", { data: cb.data });
     ctx.waitUntil(dispatch(env, "command"));
     return send(chat, S.ack);
   }
   return new Response("ok");
+}
+
+async function roleOf(env, uid) {
+  if (String(uid) === String(env.OWNER_CHAT_ID)) return "owner";
+  return (await env.DB.prepare("SELECT status FROM users WHERE id = ?1").bind(uid).first("status")) || null;
+}
+
+async function strings(env, lang) {
+  return { ...FALLBACK, ...((await snap(env, `strings:${lang}`)) || {}) };
+}
+
+const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+const fullName = (f) => [f.first_name, f.last_name].filter(Boolean).join(" ") || "?";
+
+// ---------- invites: one link for everyone; each person asks once, the Owner allows or declines ----------
+async function joinRequest(env, msg, status) {
+  const [cmd, code] = msg.text.trim().split(/\s+/), invite = await metaGet(env, "invite_code");
+  if (cmd !== "/start" || !code || !invite || !safeEqual(code, invite)) return new Response("ok"); // strangers: silence
+  const f = msg.from, lang = f.language_code === "it" ? "it" : "en", S = await strings(env, lang);
+  if (status === "pending") return send(msg.chat.id, S.req_wait);
+  if (status) return new Response("ok");                    // declined or removed: no new request
+  const r = await env.DB.prepare("INSERT OR IGNORE INTO users (id, status, name, username, lang, requested_at) VALUES (?1, 'pending', ?2, ?3, ?4, ?5)")
+    .bind(f.id, fullName(f), f.username || null, lang, Date.now()).run();
+  if (!r.meta.changes) return send(msg.chat.id, S.req_wait);  // a double tap: notify the Owner only once
+  const O = await strings(env, (await snap(env, `${env.OWNER_CHAT_ID}:lang`)) || "en");
+  const who = `<b>${esc(fullName(f))}</b>` + (f.username ? ` · @${esc(f.username)}` : "") + ` · id <code>${f.id}</code>` + (f.language_code ? ` · ${esc(f.language_code)}` : "");
+  await tg(env, "sendMessage", { chat_id: env.OWNER_CHAT_ID, parse_mode: "HTML", text: O.req_new.replace("{who}", who),
+    reply_markup: { inline_keyboard: [[{ text: O.btn_allow, callback_data: `fa:${f.id}` }, { text: O.btn_deny, callback_data: `fd:${f.id}` }]] } });
+  return send(msg.chat.id, S.req_sent);
+}
+
+// fa: allow (also again after a removal), fd: decline, fr: remove (the job stops their watches)
+async function decideFriend(env, ctx, origin, act, arg, chat, mid, S) {
+  const row = await env.DB.prepare("SELECT id, name, lang FROM users WHERE id = ?1").bind(Number(arg)).first();
+  if (!row) return new Response("ok");
+  const status = { fa: "allowed", fd: "denied", fr: "removed" }[act];
+  await env.DB.prepare("UPDATE users SET status = ?1, decided_at = ?2 WHERE id = ?3").bind(status, Date.now(), row.id).run();
+  const F = await strings(env, (await snap(env, `${row.id}:lang`)) || row.lang || "en");
+  if (status === "allowed") {
+    await tg(env, "sendMessage", { chat_id: row.id, text: F.allowed_friend + "\n\n" + F.lang_q, reply_markup: { inline_keyboard: langKb(row.lang) } });
+    await menu(env, origin, row.id, row.lang || "en");
+  } else if (status === "removed") {
+    await enqueue(env, Number(env.OWNER_CHAT_ID), "revoke", { user_id: row.id });
+    ctx.waitUntil(dispatch(env, "command"));
+    await tg(env, "sendMessage", { chat_id: row.id, text: F.removed_friend });
+    await tg(env, "setChatMenuButton", { chat_id: row.id, menu_button: { type: "default" } });
+  }
+  const done = { allowed: S.allowed_owner, denied: S.denied_owner, removed: S.removed_owner }[status];
+  return Response.json({ method: "editMessageText", chat_id: chat, message_id: mid, parse_mode: "HTML", text: done.replace("{name}", `<b>${esc(row.name)}</b>`) });
+}
+
+async function invite(env, chat, S, reset) {
+  let code = await metaGet(env, "invite_code");
+  if (!code || reset) {
+    code = btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(12)))).replace(/\+/g, "-").replace(/\//g, "_");
+    await metaPut(env, "invite_code", code);
+  }
+  const me = await (await fetch(`https://api.telegram.org/bot${env.TELEGRAM_TOKEN}/getMe`)).json();
+  return send(chat, (reset ? S.invite_reset : S.invite_text).replace("{link}", `https://t.me/${me.result.username}?start=${code}`));
+}
+
+async function friends(env, chat, S) {
+  const { results } = await env.DB.prepare("SELECT id, status, name, username FROM users ORDER BY requested_at DESC LIMIT 30").all();
+  if (!results.length) return send(chat, S.friends_empty);
+  const text = S.friends_t + "\n\n" + results.map((r) => `• ${esc(r.name)}${r.username ? " (@" + esc(r.username) + ")" : ""} — ${S["st_" + r.status]}`).join("\n");
+  const kb = results.map((r) => r.status === "allowed" ? [{ text: S.btn_remove.replace("{name}", r.name), callback_data: `fr:${r.id}` }]
+    : r.status === "pending" ? [{ text: `${S.btn_allow} ${r.name}`, callback_data: `fa:${r.id}` }, { text: S.btn_deny, callback_data: `fd:${r.id}` }]
+    : [{ text: S.btn_readd.replace("{name}", r.name), callback_data: `fa:${r.id}` }]);
+  return send(chat, text, kb);
+}
+
+// Friends: at most RATE searches, new watches and "check now"s an hour (they share the Owner's capacity).
+const RATE = 12;
+async function overLimit(env, uid) {
+  const key = `rl:${uid}`, now = Date.now();
+  const recent = JSON.parse((await metaGet(env, key)) || "[]").filter((t) => now - t < 60 * MIN);
+  if (recent.length >= RATE) return true;
+  await metaPut(env, key, JSON.stringify([...recent, now]));
+  return false;
+}
+
+async function metaGet(env, k) {
+  return env.DB.prepare("SELECT v FROM meta WHERE k = ?1").bind(k).first("v");
+}
+
+async function metaPut(env, k, v) {
+  await env.DB.prepare("INSERT INTO meta (k, v) VALUES (?1, ?2) ON CONFLICT(k) DO UPDATE SET v = ?2").bind(k, v).run();
 }
 
 // The menu button opens the Mini App form (served from this Worker's assets) in the user's language.
@@ -109,11 +211,12 @@ async function form(req, env, ctx) {
   let p;
   try { p = JSON.parse(body); } catch { return Response.json({ ok: false, error: "bad request" }, { status: 400 }); }
   const user = await verifyInitData(String(p.initData || ""), env.TELEGRAM_TOKEN);
-  if (!user || String(user.id) !== String(env.OWNER_CHAT_ID)) return Response.json({ ok: false, error: "not allowed" }, { status: 403 });
+  const role = user && (await roleOf(env, user.id));
+  if (role !== "owner" && role !== "allowed") return Response.json({ ok: false, error: "not allowed" }, { status: 403 });
   if (!["watch", "search"].includes(p.mode) || !p.data || typeof p.data !== "object") return Response.json({ ok: false, error: "bad request" }, { status: 400 });
+  const S = await strings(env, (await snap(env, `${user.id}:lang`)) || "en");
+  if (role === "allowed" && (await overLimit(env, user.id))) return Response.json({ ok: false, error: S.rate_limited }, { status: 429 });
   await enqueue(env, user.id, "form", { mode: p.mode, data: p.data });
-  const lang = (await snap(env, `${user.id}:lang`)) || "en";
-  const S = { ...FALLBACK, ...((await snap(env, `strings:${lang}`)) || {}) };
   ctx.waitUntil(Promise.all([dispatch(env, "form"), tg(env, "sendMessage", { chat_id: user.id, text: S.ack })]));
   return Response.json({ ok: true });
 }
@@ -131,19 +234,32 @@ async function verifyInitData(initData, token, maxAgeS = 86400) {
   try { return JSON.parse(q.get("user")); } catch { return null; }
 }
 
-function send(chat_id, text, kb) {
-  // A webhook response may carry one Bot API call: the fastest way to answer.
-  return Response.json({ method: "sendMessage", chat_id, text, parse_mode: "HTML", disable_web_page_preview: true,
-    ...(kb && kb.length ? { reply_markup: { inline_keyboard: kb } } : {}) });
+function sendBody(chat_id, text, kb) {
+  return { chat_id, text, parse_mode: "HTML", disable_web_page_preview: true, ...(kb && kb.length ? { reply_markup: { inline_keyboard: kb } } : {}) };
 }
 
-function fromSnapshot(chat, s, empty) {
-  return s ? send(chat, s.text, s.kb) : send(chat, empty);
+function send(chat_id, text, kb) {
+  // A webhook response may carry one Bot API call: the fastest way to answer.
+  return Response.json({ method: "sendMessage", ...sendBody(chat_id, text, kb) });
+}
+
+// A snapshot is one message, or several (a period spanning months, one per month): those go out in order through
+// the API, since a webhook reply can carry only one.
+async function fromSnapshot(env, chat, s, empty) {
+  if (!s) return send(chat, empty);
+  const parts = s.parts || [{ text: s.text, kb: s.kb }];
+  if (parts.length === 1) return send(chat, parts[0].text, parts[0].kb);
+  for (const p of parts) await tg(env, "sendMessage", sendBody(chat, p.text, p.kb));
+  return new Response("ok");
+}
+
+function langKb(preferred) {
+  const it = preferred === "it";
+  return [[{ text: (it ? "✅ " : "") + "🇮🇹 Italiano", callback_data: "lang:it" }, { text: (it ? "" : "✅ ") + "🇬🇧 English", callback_data: "lang:en" }]];
 }
 
 function langPrompt(chat, S, preferred) {
-  const it = preferred === "it";
-  return send(chat, S.lang_q, [[{ text: (it ? "✅ " : "") + "🇮🇹 Italiano", callback_data: "lang:it" }, { text: (it ? "" : "✅ ") + "🇬🇧 English", callback_data: "lang:en" }]]);
+  return send(chat, S.lang_q, langKb(preferred));
 }
 
 async function tg(env, method, body) {
@@ -244,12 +360,11 @@ function jobDead(m, now) {
 
 // One Owner notice when a problem starts (S[key]) and one when it ends; quiet at night like the alerts.
 async function notifyOnChange(env, key, bad) {
-  if (bad === ((await env.DB.prepare("SELECT v FROM meta WHERE k = ?1").bind(key).first("v")) === "1")) return;
-  const uid = env.OWNER_CHAT_ID, lang = (await snap(env, `${uid}:lang`)) || "en";
-  const S = { ...FALLBACK, ...((await snap(env, `strings:${lang}`)) || {}) };
+  if (bad === ((await metaGet(env, key)) === "1")) return;
+  const uid = env.OWNER_CHAT_ID, S = await strings(env, (await snap(env, `${uid}:lang`)) || "en");
   const h = Number(new Intl.DateTimeFormat("en", { hour: "numeric", hourCycle: "h23", timeZone: "Europe/Rome" }).format(new Date()));
   if (await tg(env, "sendMessage", { chat_id: uid, text: bad ? S[key] : S.recovered, disable_notification: h >= 23 || h < 7 }))
-    await env.DB.prepare("INSERT INTO meta (k, v) VALUES (?1, ?2) ON CONFLICT(k) DO UPDATE SET v = ?2").bind(key, bad ? "1" : "").run();
+    await metaPut(env, key, bad ? "1" : "");
 }
 
 // ---------- GitHub dispatch ----------

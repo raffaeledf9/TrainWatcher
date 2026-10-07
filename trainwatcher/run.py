@@ -23,6 +23,7 @@ except Exception:  # no tz database: Italy's winter offset is close enough for d
 GH_TOKEN_EXPIRES = date(2027, 10, 5)  # the Worker's fine-grained token; update when rotating it
 TOKEN_URL = "https://github.com/settings/personal-access-tokens"
 OP_NAME = {"T": "Trenitalia", "I": "Italo"}
+FRIEND_MAX_WATCHES = 5  # the Owner has no cap
 
 
 # ---------- I/O ----------
@@ -66,13 +67,34 @@ def telegram(method, **params):
     return {}
 
 
+def chunks(text, kb, limit=3900):
+    """Telegram rejects messages over 4096 characters: a longer text goes out as consecutive messages split at
+    line breaks (lines carry whole HTML tags), the buttons on the last one. -> [(text, kb)]"""
+    parts, cur, size = [], [], 0
+    for line in text.split("\n"):
+        line = line if len(line) <= limit else line[:limit - 1] + "…"
+        if cur and size + len(line) + 1 > limit:
+            parts.append("\n".join(cur))
+            cur, size = [], 0
+        cur.append(line)
+        size += len(line) + 1
+    parts.append("\n".join(cur))
+    return [(p, kb if i == len(parts) - 1 else []) for i, p in enumerate(parts)]
+
+
 def send(user_id, text_kb, now_local, silent=None):
-    text, kb = text_kb
-    if len(text) > 4000:  # Telegram rejects anything over 4096: rather a cut message than none
-        text = text[:text.rfind("\n", 0, 3900)] + "\n…"
-    telegram("sendMessage", chat_id=user_id, text=text, parse_mode="HTML", disable_web_page_preview=True,
-             disable_notification=alerts.silent(now_local) if silent is None else silent,
-             **({"reply_markup": {"inline_keyboard": kb}} if kb else {}))
+    for text, kb in chunks(*text_kb):
+        telegram("sendMessage", chat_id=user_id, text=text, parse_mode="HTML", disable_web_page_preview=True,
+                 disable_notification=alerts.silent(now_local) if silent is None else silent,
+                 **({"reply_markup": {"inline_keyboard": kb}} if kb else {}))
+
+
+def status_messages(db, w, at, lang, today, **kw):
+    """A watch's or search's status view: one message, or one per month for a period spanning several."""
+    months = check.split_months(w, today)
+    total = check.views(w, db, since=today)[3]
+    return [render.status(w, check.views(w, db, since=today, month=m)[0], at, lang, today, total=total if i == len(months) else None,
+                          part=(i, len(months), m) if m else None, **kw) for i, m in enumerate(months, 1)]
 
 
 def lang_of(db, uid):
@@ -94,11 +116,14 @@ def handle(db, item, now, local, forced, searches):
             return
         if p.get("mode") == "search":
             searches.append(w)
-        else:
+        elif not over_cap(db, uid, lang, local):
             w.id = store.add_watch(db, w, now)
             forced.add(w.id)
-            if schedule.load(store.watches(db, uid), local.date()) > schedule.WARN_LOAD:
+            if schedule.load(store.watches(db), local.date()) > schedule.WARN_LOAD:  # capacity is shared by everyone
                 send(uid, (i18n.t(lang, "load_warn"), []), local, silent=False)
+    elif kind == "revoke" and uid == int(os.environ["OWNER_CHAT_ID"]):  # the Owner removed a friend: stop their watches
+        for w in store.watches(db, int(p["user_id"])):
+            store.set_status(db, w.id, "past")
     elif kind == "callback":
         act, _, arg = p.get("data", "").partition(":")
         own = arg.isdigit() and (w := store.get_watch(db, int(arg))) is not None and w.user_id == uid and w.status == "active"
@@ -108,12 +133,20 @@ def handle(db, item, now, local, forced, searches):
             store.set_status(db, int(arg), "past")
         elif act == "wt":
             spec = store.meta_get(db, f"search:{arg}")
-            if spec and json.loads(spec)["user_id"] == uid:
+            if spec and json.loads(spec)["user_id"] == uid and not over_cap(db, uid, lang, local):
                 db.execute("DELETE FROM meta WHERE k = ?", (f"search:{arg}",))  # a second tap creates nothing
                 w = model.Watch.from_json(json.loads(spec))
                 w.id = store.add_watch(db, w, now)
                 forced.add(w.id)
                 send(uid, (i18n.t(lang, "created", w=render.route(w, lang, short=True) + " · " + render.watch_days(w, lang)), []), local, silent=False)
+
+
+def over_cap(db, uid, lang, local):
+    """Friends have at most FRIEND_MAX_WATCHES active watches; tells them when a new one is refused."""
+    if uid == int(os.environ["OWNER_CHAT_ID"]) or len(store.watches(db, uid)) < FRIEND_MAX_WATCHES:
+        return False
+    send(uid, (i18n.t(lang, "cap_reached", n=FRIEND_MAX_WATCHES), []), local, silent=False)
+    return True
 
 
 # ---------- checks ----------
@@ -163,16 +196,15 @@ def check_and_alert(db, now, local, forced, searches):
     sent = op_health(db, now, local, failing, {u[0] for u, st in statuses.items() if st != check.NA})
     for w in take:
         lang = lang_of(db, w.user_id)
-        vs, _, _, total = check.views(w, db, since=today)  # the status view still lists today's remaining trains
         events, state = [], getattr(w, "alert_state", {}) or {}
         if w.alertable(today):                             # alerts only for days that haven't started
             va, lowest, legs, _ = check.views(w, db, since=tomorrow)
             low_day = date.fromisoformat(va[0]["ties"][0].dep[:10]) if va[0]["ties"] else None
             events, state = alerts.evaluate(w, state, lowest, check.live_ok(w, statuses, tomorrow), today, legs=legs, low_day=low_day)
         if any(e["kind"] == "baseline" for e in events) or w.id in forced:
-            send(w.user_id, render.status(w, vs, local, lang, today, total=total, stale_since=stale_since(db, w),
-                                          failed=unanswered(w, statuses, today)), local, silent=False)
-            sent += 1
+            for msg in status_messages(db, w, local, lang, today, stale_since=stale_since(db, w), failed=unanswered(w, statuses, today)):
+                send(w.user_id, msg, local, silent=False)  # from today on: it still lists today's remaining trains
+                sent += 1
         rest = [e for e in events if e["kind"] != "baseline"]
         if rest:
             send(w.user_id, render.alert(w, rest, va, local, lang, today), local)
@@ -184,10 +216,10 @@ def check_and_alert(db, now, local, forced, searches):
         w.id = None
         sid = f"{int(now.timestamp())}{i}"
         store.meta_set(db, f"search:{sid}", json.dumps(w.to_json()))
-        vs, lowest, legs, total = check.views(w, db, since=today)
-        send(w.user_id, render.status(w, vs, local, lang_of(db, w.user_id), today, search=True, total=total, search_id=sid,
-                                      stale_since=stale_since(db, w), failed=unanswered(w, statuses, today)), local, silent=False)
-        sent += 1
+        for msg in status_messages(db, w, local, lang_of(db, w.user_id), today, search=True, search_id=sid,
+                                   stale_since=stale_since(db, w), failed=unanswered(w, statuses, today)):
+            send(w.user_id, msg, local, silent=False)
+            sent += 1
     db.commit()
     bad = sum(1 for s in statuses.values() if s not in ("OK", "EMPTY", "NA"))
     return len(take), len(deferred), len(units), bad, sent, fetch_s, failing
@@ -205,8 +237,8 @@ def snapshots(db, now, local):
             low_offer = vs[0]["ties"][0] if vs[0]["ties"] else None
             at = w.last_check.replace(tzinfo=timezone.utc).astimezone(ROME) if w.last_check else None
             items.append((w, low_offer if not w.round_trip else None, lowest, at))
-            text, kb = render.status(w, vs, at or local, lang, local.date(), total=total, stale_since=stale_since(db, w))
-            rows.append({"key": f"{uid}:status:{w.id}", "user_id": uid, "body": json.dumps({"text": text, "kb": kb})})
+            parts = [c for msg in status_messages(db, w, at or local, lang, local.date(), stale_since=stale_since(db, w)) for c in chunks(*msg)]
+            rows.append({"key": f"{uid}:status:{w.id}", "user_id": uid, "body": json.dumps({"parts": [{"text": t, "kb": k} for t, k in parts]})})
             q = render.delete_question(n, w, lang)
             rows.append({"key": f"{uid}:delete:{w.id}", "user_id": uid, "body": json.dumps({"text": q[0], "kb": q[1], "n": n})})
             series = check.chart_series(w, db, vs)
@@ -228,7 +260,10 @@ def snapshots(db, now, local):
     for lang in (i18n.EN, i18n.IT):
         rows.append({"key": f"strings:{lang}", "user_id": 0, "body": json.dumps({k: i18n.S[lang][k] for k in (
             "welcome", "lang_q", "lang_set", "ack", "deleted", "kept", "help", "list_empty", "past_empty", "del_yes", "del_no",
-            "job_dead", "recovered", "dispatch_fail", "no_chart")})})
+            "job_dead", "recovered", "dispatch_fail", "no_chart", "req_sent", "req_wait", "req_new", "btn_allow", "btn_deny",
+            "btn_remove", "btn_readd", "allowed_owner", "denied_owner", "removed_owner", "allowed_friend", "removed_friend",
+            "invite_text", "invite_reset", "friends_t", "friends_empty", "st_pending", "st_allowed", "st_denied", "st_removed",
+            "help_owner", "rate_limited")})})
     rows.append({"key": "next_due", "user_id": 0, "body": json.dumps(next_due(db))})  # the Worker starts the next run then
     for i in range(0, len(rows), 50):
         worker("/job/snapshot", {"rows": rows[i:i + 50]})
@@ -259,6 +294,14 @@ def health(db, now, local, failing, checked, worker_ok, event, overdue=False):
     elif flagged and worker_ok and event == "workflow_dispatch":
         notices.append(i18n.t(lang, "recovered"))
         put("worker_dead", "")
+
+    active = store.watches(db)
+    load = schedule.load(active, local.date())
+    if load > schedule.WARN_LOAD and get("load_warned", "") != "1":  # once per crossing; re-armed below 60 %
+        notices.append(i18n.t(lang, "load_owner", p=round(load * 100), n=len(active)))
+        put("load_warned", "1")
+    elif load < 0.6:
+        put("load_warned", "")
 
     put("week_checks", int(get("week_checks")) + checked)
     put("week_fails", int(get("week_fails")) + bool(failing))

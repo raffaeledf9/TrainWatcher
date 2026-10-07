@@ -9,7 +9,7 @@ from trainwatcher.i18n import EN, day, month, price, t
 from trainwatcher.offers import ITALO
 
 OPS = {"FR": "Frecciarossa", "FA": "Frecciargento", "FB": "Frecciabianca", "IT": "Italo"}
-MAX_TIES = 8  # trains listed in full; Telegram rejects messages over 4096 characters (a flat month had 120 ties)
+MAX_TIES = 8  # trains listed in full; beyond that the compact list by day (a flat month had 120 ties)
 TRENITALIA_URL = "https://www.lefrecce.it/Channels.Website.WEB/#/?tab=biglietto"
 
 
@@ -123,6 +123,24 @@ def last_check(at, lang):
 
 
 # ---------- status view (style A) ----------
+def compact_ties(ties, leg, lang, budget=None):
+    """Many trains at one price: every one of them by day ("mar 10 nov: 07:00 Centrale, 18:10 Rogoredo"), train
+    number and class dropped (Owner decision 2026-10-07). budget: max characters (alerts), the rest summarised."""
+    mixed = len({o.operator for o in ties}) > 1
+    by_day = {}
+    for o in sorted(ties, key=lambda o: o.dep):
+        by_day.setdefault(o.dep[:10], []).append((f"{o.category} " if mixed else "") + departs(o, leg))
+    lines, shown = [], 0
+    for d, items in by_day.items():
+        line = f"• {day(date.fromisoformat(d), lang)}: " + ", ".join(items)
+        if budget is not None and sum(len(x) + 1 for x in lines) + len(line) > budget:
+            lines.append(t(lang, "more_ties", n=len(ties) - shown))
+            break
+        lines.append(line)
+        shown += len(items)
+    return lines
+
+
 def _leg_block(view, leg, lang):
     lines = []
     multi = len(leg.dates()) > 1
@@ -134,9 +152,10 @@ def _leg_block(view, leg, lang):
         return lines
     n = len(view["ties"])
     lines.append(f"<b>{price(view['low'], lang)}</b> {t(lang, 'lowest')} · {n} {t(lang, 'trains' if n > 1 else 'train')}")
-    lines += [train_line(o, lang, multi, leg) for o in view["ties"][:MAX_TIES]]
     if n > MAX_TIES:
-        lines.append(t(lang, "more_ties", n=n - MAX_TIES))
+        lines += compact_ties(view["ties"], leg, lang)
+    else:
+        lines += [train_line(o, lang, multi, leg) for o in view["ties"]]
     if view["others"]:
         lines += ["", f"<i>{t(lang, 'next_')}</i>"]
         lines += [f"• {price(o.price, lang)} {(day(date.fromisoformat(o.dep[:10]), lang) + ' ') if multi else ''}{departs(o, leg)} {short_train(o)} · {escape(o.fare)}"
@@ -144,15 +163,21 @@ def _leg_block(view, leg, lang):
     return lines
 
 
-def status(watch, views, checked_at, lang, today=None, search=False, total=None, stale_since=None, search_id=None, failed=None):
-    """views: one dict per leg {low, ties, others, other_fare}; total: round-trip total or None."""
+def status(watch, views, checked_at, lang, today=None, search=False, total=None, stale_since=None, search_id=None, failed=None,
+           part=None):
+    """views: one dict per leg {low, ties, others, other_fare}, None for a leg without days in this part;
+    total: round-trip total or None. part: (i, n, "YYYY-MM") when a period spanning months is sent one month per
+    message; the footer and the watch buttons go on the last one."""
     pax = t(lang, watch.passenger)
+    when = watch_days(watch, lang, today) + (f" · <b>{month(int(part[2][:4]), int(part[2][5:]), lang)}</b> ({part[0]}/{part[1]})" if part else "")
     if search:
-        head = [f"🔎 <b>{t(lang, 'search')}</b> · {route(watch, lang, short=True)} · {watch_days(watch, lang, today)} · 👤 {pax} · 💶 {escape(fare_label(watch, lang))}"]
+        head = [f"🔎 <b>{t(lang, 'search')}</b> · {route(watch, lang, short=True)} · {when} · 👤 {pax} · 💶 {escape(fare_label(watch, lang))}"]
     else:
-        head = [f"🚄 <b>{route(watch, lang)}</b>", f"📅 {watch_days(watch, lang, today)} · 👤 {pax} · 💶 {escape(fare_label(watch, lang))}"]
+        head = [f"🚄 <b>{route(watch, lang)}</b>", f"📅 {when} · 👤 {pax} · 💶 {escape(fare_label(watch, lang))}"]
     body = []
     for i, (view, leg) in enumerate(zip(views, watch.legs)):
+        if view is None:
+            continue
         if watch.round_trip:
             body += ["", f"{'→' if i == 0 else '←'} <b>{t(lang, 'out' if i == 0 else 'ret')}</b> · {days_label(leg, lang, today)}"]
         else:
@@ -160,7 +185,12 @@ def status(watch, views, checked_at, lang, today=None, search=False, total=None,
         body += _leg_block(view, leg, lang)
     if total is not None:
         body += ["", f"{t(lang, 'total')} <b>{price(total, lang)}</b>"]
-    low = total if watch.round_trip else views[0]["low"]
+    shown = [v for v in views if v is not None]
+    cheapest = (shown[0].get("ties") if shown else None) or [None]
+    kb = book_rows(watch, lang, cheapest[0] and date.fromisoformat(cheapest[0].dep[:10]), today)
+    if part and part[0] < part[1]:
+        return "\n".join(head + body), kb
+    low = total if watch.round_trip else (views[0] or {}).get("low")
     tail = [""]
     if not search and watch.max_price is not None and low is not None and low > watch.max_price:
         tail.append(f"⚠️ {t(lang, 'above')} <b>{price(watch.max_price, lang)}</b>")
@@ -169,8 +199,6 @@ def status(watch, views, checked_at, lang, today=None, search=False, total=None,
     if stale_since:
         tail.append(t(lang, "stale", t=f"{stale_since:%H:%M}"))
     tail.append(f"🔄 {t(lang, 'live')}" if search else last_check(checked_at, lang))
-    cheapest = views[0].get("ties") or [None]
-    kb = book_rows(watch, lang, cheapest[0] and date.fromisoformat(cheapest[0].dep[:10]), today)
     kb += [[{"text": t(lang, "watch_this"), "callback_data": f"wt:{search_id}"}]] if search else actions(watch, lang)
     return "\n".join(head + body + tail), kb
 
@@ -196,12 +224,13 @@ def alert(watch, events, views, checked_at, lang, today=None):
         icon, key = TITLES[e["kind"]]
         lines = [f"{icon} <b>{t(lang, key)}</b> · {escape(fare_label(watch, lang))}", f"{route(watch, lang)} · {watch_days(watch, lang, today)}", ""]
         multi = any(len(l.dates()) > 1 for l in watch.legs)
-        for o, leg in ties[:MAX_TIES]:
-            old = f" <s>{price(e['prev'], lang)}</s>" if e["kind"] in ("drop", "rise") and e.get("prev") is not None else ""
+        old = f" <s>{price(e['prev'], lang)}</s>" if e["kind"] in ("drop", "rise") and e.get("prev") is not None else ""
+        if len(ties) > MAX_TIES:
+            lines.append(f"<b>{price(ties[0][0].price, lang)}</b>{old} · {len(ties)} {t(lang, 'trains')}")
+            lines += compact_ties([o for o, _ in ties], ties[0][1], lang, budget=2500)
+        for o, leg in (ties if len(ties) <= MAX_TIES else []):
             d = (day(date.fromisoformat(o.dep[:10]), lang) + " ") if multi else ""
             lines.append(f"<b>{price(o.price, lang)}</b>{old} — {OPS.get(o.category, o.category)} {o.train} {d}{times(o, leg)} · {o.cls}")
-        if len(ties) > MAX_TIES:
-            lines.append(t(lang, "more_ties", n=len(ties) - MAX_TIES))
         lines.append("")
         lines += _notes(watch, e, lang)
         sections.append(lines)

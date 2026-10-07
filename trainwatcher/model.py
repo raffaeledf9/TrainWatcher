@@ -14,6 +14,7 @@ FARES = {
     "TI:A/R same day": None,
 }
 HORIZON_DAYS = 200  # beyond any operator's booking horizon; days past the real horizon simply return no trains
+MAX_DAYS = 92       # longest custom period (each day is searched at every check: capacity is shared by everyone)
 
 
 class Invalid(ValueError):
@@ -142,7 +143,7 @@ def _from_payload(p, user_id, station_keys, today):
             raise Invalid("bad dates")
         if not ds or max(ds) < today:
             raise Invalid("dates are in the past")
-        if min(ds) > today + timedelta(days=HORIZON_DAYS) or len(ds) > 31:
+        if min(ds) > today + timedelta(days=HORIZON_DAYS) or len(ds) > MAX_DAYS:
             raise Invalid("dates too far or too many")
         return lg
 

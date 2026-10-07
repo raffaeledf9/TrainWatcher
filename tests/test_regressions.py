@@ -101,9 +101,9 @@ class Commands(unittest.TestCase):
     def setUp(self):
         self.db = store.connect(":memory:")
         self.addCleanup(self.db.close)
-        p = mock.patch.object(run, "send")
-        p.start()
-        self.addCleanup(p.stop)
+        for p in (mock.patch.object(run, "send"), mock.patch.dict(os.environ, {"OWNER_CHAT_ID": "7"})):
+            p.start()
+            self.addCleanup(p.stop)
 
     def handle(self, uid, data):
         run.handle(self.db, {"user_id": uid, "kind": "callback", "payload": json.dumps({"data": data})}, NOW, NOW, set(), [])
