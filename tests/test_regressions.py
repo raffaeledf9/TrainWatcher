@@ -164,6 +164,17 @@ class SecondPass(unittest.TestCase):
         self.assertIn("osc=RMT&dsc=MI0", kb[0][0]["url"])
         self.assertIn("od=05%2F12%2F2026", kb[0][0]["url"])
 
+    def test_purchase_window_texts_use_the_fares_own_window(self):
+        w = watch(out={"d": ["2026-11-10"], "w": None}, ret={"d": ["2026-11-10"], "w": None}, fares=["TI:A/R same day"])  # 3 days
+        o = Offer(TRENITALIA, "9600", "FR", "2026-11-10T07:00", "2026-11-10T10:00", "Milano Centrale", "Roma Termini", "Standard", "A/R IN GIORNATA", 30.0, None, True)
+        drop = {"kind": "drop", "low": 60.0, "prev": 70.0, "legs": {"out": 30.0, "ret": 30.0}, "prev_legs": {"out": 35.0, "ret": 35.0}}
+        one_way = watch(fares=["T:FrecciaYOUNG"], pax="young")
+        text, _ = render.alert(one_way, [dict(drop, legs=None, prev_legs=None, low=30.0, prev=35.0)], [{"ties": [o]}], NOW, "en", date(2026, 10, 6))
+        self.assertIn("(11-day limit)", text)
+        gone = {"kind": "gone", "reason": "window", "low": None, "prev": 60.0, "legs": None, "prev_legs": None}
+        text, _ = render.alert(w, [gone], [{"ties": [o]}, {"ties": [o]}], NOW, "en", date(2026, 11, 8))
+        self.assertIn("3 days before departure", text)
+
     def test_first_time_on_sale_is_not_back(self):
         w = watch()
         _, s = alerts.evaluate(w, {}, None, True, date(2026, 10, 6))          # created before sales opened
