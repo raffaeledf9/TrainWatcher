@@ -6,12 +6,9 @@ from datetime import datetime, timezone
 
 from trainwatcher.i18n import EN, price
 
-try:
-    from zoneinfo import ZoneInfo
-    ROME = ZoneInfo("Europe/Rome")
-except Exception:  # no tz database: Italy's winter offset is close enough for a chart
-    from datetime import timedelta
-    ROME = timezone(timedelta(hours=1))
+from zoneinfo import ZoneInfo
+
+ROME = ZoneInfo("Europe/Rome")
 
 COLORS = ["#2481cc", "#e67e22", "#8e44ad", "#27ae60", "#c0392b", "#16a085", "#d4ac0d", "#7f8c8d"]
 

@@ -31,13 +31,18 @@ def units(watch, since=None):
 
 
 def plan(due_watches, now, budget_s=RUN_FETCH_BUDGET_S, today=None, first=()):
-    """Order due watches (nearest departure first, then the longest-unchecked; a watch skipped last run goes
-    first) and take them while the estimated cost fits the budget. Units shared by several watches are
-    fetched once. Returns (watches_to_check, units_to_fetch, deferred_watches)."""
+    """Order due watches (nearest departure first, then the longest-unchecked; watches skipped by earlier runs go
+    first, longest-unchecked first) and take them while the estimated cost fits the budget. Units shared by several
+    watches are fetched once. Returns (watches_to_check, units_to_fetch, deferred_watches)."""
     today = today or now.date()
-    # first: watches the Owner just created or asked to check now; never postpone what they're waiting for
-    order = sorted(due_watches, key=lambda w: (w.id not in first, not getattr(w, "skipped", False), w.next_day(today),
-                                                getattr(w, "last_check", None) or datetime.min))
+
+    def key(w):
+        # first: watches the Owner just created or asked to check now; never postpone what they're waiting for
+        waited = getattr(w, "last_check", None) or datetime.min
+        if getattr(w, "skipped", False):  # by departure, each run's new leftovers would overtake older ones forever
+            return (w.id not in first, 0, waited, w.next_day(today))
+        return (w.id not in first, 1, w.next_day(today), waited)
+    order = sorted(due_watches, key=key)
     take, fetch, deferred, spent = [], {}, [], 0.0
     for w in order:
         new = [u for u in units(w, today) if u not in fetch]
