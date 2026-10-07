@@ -5,10 +5,11 @@ import json
 import os
 import tempfile
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from unittest import mock
 
-from trainwatcher import check, run
+from trainwatcher import check, run, store
 from trainwatcher.offers import EMPTY, ITALO, OK, TRENITALIA, Offer, SearchResult
 
 UTC = timezone.utc
@@ -59,11 +60,11 @@ class World:
         return SearchResult(OK if offers else EMPTY, offers)
 
     def worker(self, path, body=None):
-        if path == "/job/take":
-            items = [q for q in self.queue if not q.get("taken")]
+        if path == "/job/take":  # like the Worker: rows taken but not acked are offered again after 10 minutes
+            items = [q for q in self.queue if not q.get("taken") or q["taken"] < self.now - timedelta(minutes=10)]
             for q in items:
-                q["taken"] = True
-            return [{k: q[k] for k in ("id", "user_id", "kind", "payload")} for q in items]
+                q["taken"] = self.now
+            return [{k: q[k] for k in ("id", "created_at", "user_id", "kind", "payload")} for q in items]
         if path == "/job/ack":
             self.queue = [q for q in self.queue if q["id"] not in body["ids"]]
         if path == "/job/snapshot":
@@ -75,7 +76,7 @@ class World:
         return {"ok": True}
 
     def enqueue(self, uid, kind, payload):
-        self.queue.append({"id": self.next_id, "user_id": uid, "kind": kind, "payload": json.dumps(payload)})
+        self.queue.append({"id": self.next_id, "created_at": self.next_id * 1000, "user_id": uid, "kind": kind, "payload": json.dumps(payload)})
         self.next_id += 1
 
 
@@ -287,6 +288,30 @@ class LongHistory(FullRuns):
         self.assertLessEqual(sum(len(r) for r in past["kb"]), 100)
 
 
+class UnsavedRun(FullRuns):
+    def test_a_run_whose_state_is_lost_loses_no_command(self):
+        db_path = os.environ["STATE_DB"]
+        self.run_at(datetime(2026, 10, 7, 8, 0))                     # a saved state with nothing in it
+        saved = Path(db_path).read_bytes()
+        self.w.enqueue(1, "form", form("watch"))
+        self.assertTrue(any("🚄" in t for t in self.run_at(datetime(2026, 10, 7, 8, 5))))
+        Path(db_path).write_bytes(saved)                             # its push failed: the next run restores the old state
+        self.run_at(datetime(2026, 10, 7, 8, 20))
+        db = store.connect(db_path)
+        n = len(store.watches(db, 1))
+        db.close()
+        self.assertEqual(n, 1)                                       # the command came back and was handled again
+
+    def test_a_saved_command_is_acked_not_handled_twice(self):
+        self.w.enqueue(1, "form", form("watch"))
+        self.run_at(datetime(2026, 10, 7, 8, 0))
+        self.run_at(datetime(2026, 10, 7, 8, 20))                    # offered again: the saved state already holds it
+        db = store.connect(os.environ["STATE_DB"])
+        n = len(store.watches(db, 1))
+        db.close()
+        self.assertEqual((n, self.w.queue), (1, []))
+
+
 class PoisonCommand(FullRuns):
     def test_days_of_use(self):
         pass
@@ -297,9 +322,10 @@ class PoisonCommand(FullRuns):
         self.w.enqueue(1, "callback", {"data": "nw:abc"})
         self.w.enqueue(1, "form", form("watch"))                     # a good one after the bad ones still works
         texts = self.run_at(datetime(2026, 10, 7, 8, 0))
-        self.assertEqual(self.w.queue, [])                           # all acknowledged: nothing to retry forever
         self.assertTrue(any("bad form" in t for t in texts))
         self.assertTrue(any("🚄" in t for t in texts))
+        again = self.run_at(datetime(2026, 10, 7, 8, 15))            # offered again once saved: acked, not retried
+        self.assertEqual((self.w.queue, [t for t in again if "bad form" in t]), ([], []))
 
 
 if __name__ == "__main__":

@@ -338,7 +338,7 @@ async function jobApi(req, env, path) {
     const { results } = await env.DB.prepare(
       `UPDATE queue SET taken_at = ?1 WHERE id IN (
          SELECT id FROM queue WHERE taken_at IS NULL OR taken_at < ?2 ORDER BY id LIMIT 50)
-       RETURNING id, user_id, kind, payload`).bind(now, now - 10 * MIN).all();
+       RETURNING id, created_at, user_id, kind, payload`).bind(now, now - 10 * MIN).all();
     return Response.json(results.sort((a, b) => a.id - b.id));
   }
   if (path === "/job/ack" && req.method === "POST") {

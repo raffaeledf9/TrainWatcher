@@ -14,11 +14,9 @@ from datetime import date, datetime, timedelta, timezone
 
 from trainwatcher import alerts, check, i18n, model, render, schedule, stations, store
 
-try:
-    from zoneinfo import ZoneInfo
-    ROME = ZoneInfo("Europe/Rome")
-except Exception:  # no tz database: Italy's winter offset is close enough for display
-    ROME = timezone(timedelta(hours=1))
+from zoneinfo import ZoneInfo
+
+ROME = ZoneInfo("Europe/Rome")  # night silence, Monday 09:00, travel-day midnight: summer time matters (tzdata pinned)
 
 GH_TOKEN_EXPIRES = date(2027, 10, 5)  # the Worker's fine-grained token; update when rotating it
 TOKEN_URL = "https://github.com/settings/personal-access-tokens"
@@ -372,6 +370,12 @@ def main():
     run_number = int(os.environ.get("GITHUB_RUN_NUMBER", "0"))
     count_unfinished(db, run_number)
     forced, searches, commands, worker_ok = set(), [], 0, True
+    # A command is acked only once a saved state holds it: the Worker offers unacked ones again after 10 minutes, and
+    # a run whose state never gets saved (failed push, lost runner) would otherwise lose them. created_at in the key:
+    # a recreated queue restarts its ids.
+    key = lambda it: f"{it['id']}:{it.get('created_at')}"
+    saved = set(json.loads(store.meta_get(db, "unacked", "[]")))
+    unacked = set(saved)
     for _ in range(10):  # drain: commands may keep arriving while we work
         items = try_worker("/job/take")
         if items is None:
@@ -379,14 +383,22 @@ def main():
         if not items:
             break
         for it in items:
+            if key(it) in saved:
+                continue
             try:
                 handle(db, it, now, local, forced, searches)
             except Exception as e:  # one bad command must not crash every run: it would be offered again and again
                 print("command failed", it.get("kind"), type(e).__name__)
-        commands += len(items)
-        if try_worker("/job/ack", {"ids": [it["id"] for it in items]}) is None:
-            worker_ok = False
-            break
+            unacked.add(key(it))
+            store.meta_set(db, "unacked", json.dumps(sorted(unacked)))
+            commands += 1
+        done = [it for it in items if key(it) in saved]
+        if done:
+            if try_worker("/job/ack", {"ids": [it["id"] for it in done]}) is None:
+                worker_ok = False
+                break
+            unacked -= {key(it) for it in done}
+            store.meta_set(db, "unacked", json.dumps(sorted(unacked)))
     for w in store.watches(db):
         if schedule.is_past(w, local.date()):
             store.set_status(db, w.id, "past")

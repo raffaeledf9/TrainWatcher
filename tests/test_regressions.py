@@ -240,6 +240,33 @@ class StateSize(unittest.TestCase):
         self.assertEqual(([w.id for w in take], [w.id for w in deferred]), ([2], [1]))
 
 
+class NoWatchStarves(unittest.TestCase):
+    def test_overload_postpones_everyone_a_little_not_someone_forever(self):
+        # 20 watches leaving within 3 weeks, 20 in December, 3 fit in a run (~110 % load): leftovers used to be
+        # re-sorted by departure, so each run's newly skipped near watches overtook the far ones forever
+        days = [date(2026, 10, 7) + timedelta(days=i) for i in range(20)] + [date(2026, 12, 1) + timedelta(days=i) for i in range(20)]
+        ws = [watch(out={"d": [str(d)], "w": None}) for d in days]
+        for i, w in enumerate(ws):
+            w.id, w.last_check, w.skipped, w.due = i, None, False, NOW
+        waits = {w.id: [] for w in ws}
+        for r in range(288):                                   # one day of runs, 5 minutes apart
+            now = NOW + timedelta(minutes=5 * r)
+            take, _, deferred = schedule.plan([w for w in ws if w.due <= now], now, budget_s=4.5)
+            for w in take:
+                waits[w.id].append(now - w.due)
+                w.last_check, w.skipped, w.due = now, False, schedule.next_check(w, now)
+            for w in deferred:
+                w.skipped = True
+        self.assertEqual([i for i, x in waits.items() if not x], [])                 # nobody starves
+        self.assertLess(max(max(x) for x in waits.values()), timedelta(hours=2))     # and nobody waits for hours
+
+
+class RomeTime(unittest.TestCase):
+    def test_summer_time_is_real(self):  # a fixed UTC+1 fallback silently shifted every boundary by an hour all summer
+        self.assertEqual(run.ROME.utcoffset(datetime(2026, 7, 1)).total_seconds(), 7200)
+        self.assertEqual(run.ROME.utcoffset(datetime(2026, 1, 15)).total_seconds(), 3600)
+
+
 class OperatorsServeTheRoute(unittest.TestCase):
     def test_a_watch_no_selected_operator_can_serve_is_refused(self):
         keys = {e["k"] for e in stations.entries()}
