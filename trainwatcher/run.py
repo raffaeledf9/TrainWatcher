@@ -283,7 +283,8 @@ def snapshots(db, now, local):
         # 📈 for the most recent ones: their last chart stays in the Worker's snapshots after they end
         pkb = [[{"text": f"📈 {render.route(w, lang, short=True)} · {render.watch_days(w, lang)}", "callback_data": f"hi:{w.id}"}] for w in past[-10:]]
         rows.append({"key": f"{uid}:past", "user_id": uid, "body": json.dumps({"text": ptext, "kb": pkb})})
-        rows.append({"key": f"{uid}:lang", "user_id": uid, "body": json.dumps(lang)})
+        # not {uid}:lang: the Worker owns it (it writes it the moment a language is chosen); republishing it here
+        # from this run's possibly older copy would undo a choice made while the run was working
     for lang in (i18n.EN, i18n.IT):
         rows.append({"key": f"strings:{lang}", "user_id": 0, "body": json.dumps({k: i18n.S[lang][k] for k in (
             "welcome", "lang_q", "lang_set", "ack", "deleted", "kept", "help", "list_empty", "past_empty", "del_yes", "del_no",

@@ -254,6 +254,16 @@ class PoisonWatch(FullRuns):
         self.assertEqual([m["text"][:12] for m in w.sent if m["chat_id"] == 42 and "New low" in m["text"]], [])  # not sent twice
 
 
+class LanguageRace(FullRuns):
+    def test_days_of_use(self):
+        pass
+
+    def test_a_run_in_progress_does_not_undo_a_language_just_chosen(self):
+        self.w.snaps["1:lang"] = "it"           # chosen in the Worker while a run (which hasn't seen the choice yet) works
+        self.run_at(datetime(2026, 10, 7, 8, 0))
+        self.assertEqual(self.w.snaps["1:lang"], "it")
+
+
 class PoisonCommand(FullRuns):
     def test_days_of_use(self):
         pass

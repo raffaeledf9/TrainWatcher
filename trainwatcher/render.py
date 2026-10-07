@@ -5,6 +5,7 @@ from datetime import date
 from html import escape
 
 from trainwatcher import stations
+from trainwatcher.alerts import window_days
 from trainwatcher.i18n import EN, day, month, price, t
 from trainwatcher.offers import ITALO
 
@@ -216,7 +217,7 @@ def alert(watch, events, views, checked_at, lang, today=None):
     for e in events:
         if e["kind"] == "gone":
             sections.append([f"🚫 <b>{escape(fare_label(watch, lang))} {t(lang, 'gone')}</b>", f"{route(watch, lang)} · {watch_days(watch, lang, today)}", "",
-                             t(lang, "gone_window" if e["reason"] == "window" else "gone_sold")])
+                             t(lang, "gone_window", n=window_days(watch)) if e["reason"] == "window" else t(lang, "gone_sold")])
             continue
         if watch.round_trip and e["kind"] in ("drop", "rise"):
             sections.append(_round_trip_alert(watch, e, views, lang, today))
@@ -260,11 +261,10 @@ def _notes(watch, e, lang):
             out.append(f"✅ {t(lang, 'under_max', m=m)}")
         else:
             out.append(f"⚠️ {t(lang, 'buy_soon' if e['kind'] == 'rise' else 'above_max', m=m)}")
-    from trainwatcher.alerts import window_days
     w = window_days(watch)
     if w is not None:
         from datetime import timedelta
-        out.append(f"🛒 {t(lang, 'window', d=day((e.get('low_day') or watch.first_day) - timedelta(days=w), lang))}")
+        out.append(f"🛒 {t(lang, 'window', d=day((e.get('low_day') or watch.first_day) - timedelta(days=w), lang), n=w)}")
     return out
 
 

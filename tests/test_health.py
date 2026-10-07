@@ -90,7 +90,7 @@ class Notices(unittest.TestCase):
         run.health(self.db, NOW, monday + timedelta(minutes=5), set(), 2, True, "")
         self.assertEqual(len(self.sent), 1)
         self.assertEqual(self.sent[0][1], True)
-        self.assertIn("6 checks, 1 failed", self.sent[0][0])
+        self.assertIn("checks: 6 · failed runs this week: 1", self.sent[0][0])
 
     def test_no_watches_and_no_failures_no_monday_message(self):
         monday = datetime(2026, 10, 12, 9, 5)
@@ -106,7 +106,7 @@ class Notices(unittest.TestCase):
         run.count_unfinished(self.db, 104)                  # runs 102 and 103 crashed or couldn't save
         self.assertEqual(store.meta_get(self.db, "week_fails"), "2")
         run.health(self.db, NOW, datetime(2026, 10, 12, 9, 5), set(), 0, True, "")  # no watches, but failures: tell
-        self.assertIn("2 failed", self.sent[0][0])
+        self.assertIn("failed runs this week: 2", self.sent[0][0])
 
     def test_token_reminder_14_days_before_once(self):
         day = datetime.combine(run.GH_TOKEN_EXPIRES - timedelta(days=15), datetime.min.time()).replace(hour=12)
