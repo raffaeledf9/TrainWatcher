@@ -184,7 +184,6 @@ def unanswered(watch, statuses, today):
 
 def check_and_alert(db, now, local, forced, searches):
     today = local.date()
-    tomorrow = today + timedelta(days=1)
     due = store.due_watches(db, now)
     due_ids = {w.id for w in due}
     due += [store.get_watch(db, i) for i in forced if i not in due_ids and store.get_watch(db, i)]
@@ -195,37 +194,77 @@ def check_and_alert(db, now, local, forced, searches):
     fetch_s = time.time() - t0
     sent = op_health(db, now, local, failing, {u[0] for u, st in statuses.items() if st != check.NA})
     for w in take:
-        lang = lang_of(db, w.user_id)
-        events, state = [], getattr(w, "alert_state", {}) or {}
-        if w.alertable(today):                             # alerts only for days that haven't started
-            va, lowest, legs, _ = check.views(w, db, since=tomorrow)
-            low_day = date.fromisoformat(va[0]["ties"][0].dep[:10]) if va[0]["ties"] else None
-            events, state = alerts.evaluate(w, state, lowest, check.live_ok(w, statuses, tomorrow), today, legs=legs, low_day=low_day)
-        if any(e["kind"] == "baseline" for e in events) or w.id in forced:
-            for msg in status_messages(db, w, local, lang, today, stale_since=stale_since(db, w), failed=unanswered(w, statuses, today)):
-                send(w.user_id, msg, local, silent=False)  # from today on: it still lists today's remaining trains
-                sent += 1
-        rest = [e for e in events if e["kind"] != "baseline"]
-        if rest:
-            send(w.user_id, render.alert(w, rest, va, local, lang, today), local)
-            sent += 1
-        store.mark_checked(db, w, now, schedule.next_check(w, now, today), state)
+        try:
+            sent += check_one(db, w, now, local, forced, statuses)
+        except Exception as e:  # one failing watch must not stop everyone's alerts (it would fail every run)
+            db.rollback()
+            print("watch failed", type(e).__name__)
+            store.mark_checked(db, w, now, schedule.next_check(w, now, today), getattr(w, "alert_state", {}) or {})
+            db.commit()  # retried at its normal cadence, not at every run
     for w in deferred:
         store.mark_skipped(db, w)
     for i, w in enumerate(searches):
-        w.id = None
-        sid = f"{int(now.timestamp())}{i}"
-        store.meta_set(db, f"search:{sid}", json.dumps(w.to_json()))
-        for msg in status_messages(db, w, local, lang_of(db, w.user_id), today, search=True, search_id=sid,
-                                   stale_since=stale_since(db, w), failed=unanswered(w, statuses, today)):
-            send(w.user_id, msg, local, silent=False)
-            sent += 1
+        try:
+            w.id = None
+            sid = f"{int(now.timestamp())}{i}"
+            store.meta_set(db, f"search:{sid}", json.dumps(w.to_json()))
+            for msg in status_messages(db, w, local, lang_of(db, w.user_id), today, search=True, search_id=sid,
+                                       stale_since=stale_since(db, w), failed=unanswered(w, statuses, today)):
+                send(w.user_id, msg, local, silent=False)
+                sent += 1
+        except Exception as e:
+            print("search failed", type(e).__name__)
     db.commit()
     bad = sum(1 for s in statuses.values() if s not in ("OK", "EMPTY", "NA"))
     return len(take), len(deferred), len(units), bad, sent, fetch_s, failing
 
 
+def check_one(db, w, now, local, forced, statuses):
+    """Alerts and status of one checked watch, committed at once: alerts already sent are never sent again."""
+    today = local.date()
+    tomorrow = today + timedelta(days=1)
+    lang = lang_of(db, w.user_id)
+    events, state = [], getattr(w, "alert_state", {}) or {}
+    if w.alertable(today):                             # alerts only for days that haven't started
+        va, lowest, legs, _ = check.views(w, db, since=tomorrow)
+        low_day = date.fromisoformat(va[0]["ties"][0].dep[:10]) if va[0]["ties"] else None
+        events, state = alerts.evaluate(w, state, lowest, check.live_ok(w, statuses, tomorrow), today, legs=legs, low_day=low_day)
+    msgs = []                                          # everything rendered before anything is sent
+    if any(e["kind"] == "baseline" for e in events) or w.id in forced:
+        msgs += [(m, False) for m in status_messages(db, w, local, lang, today, stale_since=stale_since(db, w),
+                                                     failed=unanswered(w, statuses, today))]  # from today on: today's remaining trains
+    rest = [e for e in events if e["kind"] != "baseline"]
+    if rest:
+        msgs.append((render.alert(w, rest, va, local, lang, today), None))
+    for m, silent in msgs:
+        send(w.user_id, m, local, silent=silent)
+    store.mark_checked(db, w, now, schedule.next_check(w, now, today), state)
+    db.commit()
+    return len(msgs)
+
+
 # ---------- snapshots for the Worker's instant replies ----------
+def watch_snapshots(db, uid, n, w, lang, local, items):
+    """Status (one part per month), delete question and chart of watch number n; adds its line to items."""
+    vs, lowest, legs, total = check.views(w, db, since=local.date())
+    low_offer = vs[0]["ties"][0] if vs[0]["ties"] else None
+    at = w.last_check.replace(tzinfo=timezone.utc).astimezone(ROME) if w.last_check else None
+    parts = [c for msg in status_messages(db, w, at or local, lang, local.date(), stale_since=stale_since(db, w)) for c in chunks(*msg)]
+    q = render.delete_question(n, w, lang)
+    rows = [{"key": f"{uid}:status:{w.id}", "user_id": uid, "body": json.dumps({"parts": [{"text": t, "kb": k} for t, k in parts]})},
+            {"key": f"{uid}:delete:{w.id}", "user_id": uid, "body": json.dumps({"text": q[0], "kb": q[1], "n": n})}]
+    series = check.chart_series(w, db, vs)
+    if series:
+        try:
+            from trainwatcher.charts import chart_png
+            png = chart_png(series, render.route(w, lang, short=True) + " · " + render.watch_days(w, lang, local.date()), lang, w.max_price)
+            rows.append({"key": f"{uid}:chart:{w.id}", "user_id": uid, "body": json.dumps({"png": base64.b64encode(png).decode()})})
+        except ImportError:
+            pass
+    items.append((w, low_offer if not w.round_trip else None, lowest, at))
+    return rows
+
+
 def snapshots(db, now, local):
     rows, users = [], {r["user_id"] for r in db.execute("SELECT DISTINCT user_id FROM watches")} | {int(os.environ["OWNER_CHAT_ID"])}
     for uid in users:
@@ -233,22 +272,10 @@ def snapshots(db, now, local):
         active = store.watches(db, uid)
         items = []
         for n, w in enumerate(active, 1):
-            vs, lowest, legs, total = check.views(w, db, since=local.date())
-            low_offer = vs[0]["ties"][0] if vs[0]["ties"] else None
-            at = w.last_check.replace(tzinfo=timezone.utc).astimezone(ROME) if w.last_check else None
-            items.append((w, low_offer if not w.round_trip else None, lowest, at))
-            parts = [c for msg in status_messages(db, w, at or local, lang, local.date(), stale_since=stale_since(db, w)) for c in chunks(*msg)]
-            rows.append({"key": f"{uid}:status:{w.id}", "user_id": uid, "body": json.dumps({"parts": [{"text": t, "kb": k} for t, k in parts]})})
-            q = render.delete_question(n, w, lang)
-            rows.append({"key": f"{uid}:delete:{w.id}", "user_id": uid, "body": json.dumps({"text": q[0], "kb": q[1], "n": n})})
-            series = check.chart_series(w, db, vs)
-            if series:
-                try:
-                    from trainwatcher.charts import chart_png
-                    png = chart_png(series, render.route(w, lang, short=True) + " · " + render.watch_days(w, lang, local.date()), lang, w.max_price)
-                    rows.append({"key": f"{uid}:chart:{w.id}", "user_id": uid, "body": json.dumps({"png": base64.b64encode(png).decode()})})
-                except ImportError:
-                    pass
+            try:
+                rows += watch_snapshots(db, uid, n, w, lang, local, items)
+            except Exception as e:  # one failing watch must not leave everyone without instant replies
+                print("snapshot failed", type(e).__name__)
         text, kb = render.watch_list(items, lang, local.date())
         rows.append({"key": f"{uid}:list", "user_id": uid, "body": json.dumps({"text": text, "kb": kb})})
         past = store.watches(db, uid, status="past")

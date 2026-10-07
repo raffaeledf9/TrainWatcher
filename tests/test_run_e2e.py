@@ -235,6 +235,25 @@ class CustomPeriod(FullRuns):
         self.assertEqual([b["text"] for b in alerts[0]["reply_markup"]["inline_keyboard"][0]], ["🎫 Book on Italo", "🎫 Book on Trenitalia"])
 
 
+class PoisonWatch(FullRuns):
+    def test_days_of_use(self):
+        pass
+
+    def test_one_failing_watch_does_not_stop_the_others(self):
+        w = self.w
+        w.enqueue(1, "form", form("watch", out={"d": ["2026-11-20"], "w": None}))   # watch 1
+        w.enqueue(42, "form", form("watch", out={"d": ["2026-11-21"], "w": None}))  # watch 2, a friend
+        self.run_at(datetime(2026, 10, 7, 8, 0))
+        w.price -= 3
+        real = run.render.alert
+        with mock.patch.object(run.render, "alert", lambda watch, *a, **k: (_ for _ in ()).throw(ValueError("bad")) if watch.id == 1 else real(watch, *a, **k)):
+            self.run_at(datetime(2026, 10, 7, 10, 30))           # both due; watch 1 breaks
+        self.assertTrue(any("New low" in m["text"] for m in w.sent if m["chat_id"] == 42))
+        self.assertIn("42:list", w.snaps)                             # the run still published its snapshots
+        self.run_at(datetime(2026, 10, 7, 13, 0))
+        self.assertEqual([m["text"][:12] for m in w.sent if m["chat_id"] == 42 and "New low" in m["text"]], [])  # not sent twice
+
+
 class PoisonCommand(FullRuns):
     def test_days_of_use(self):
         pass
