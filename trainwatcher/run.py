@@ -234,7 +234,9 @@ def health(db, now, local, failing, checked, worker_ok, event, overdue=False):
     put("week_fails", int(get("week_fails")) + bool(failing))
     week = local.strftime("%G-W%V")
     if local.weekday() == 0 and local.hour >= 9 and get("weekly_sent", "") != week:
-        send(owner, (i18n.t(lang, "weekly", w=len(store.watches(db)), c=get("week_checks"), f=get("week_fails")), []), local, silent=True)
+        active, fails = len(store.watches(db)), int(get("week_fails"))
+        if active or fails:  # no watches and nothing broke: nothing worth a message
+            send(owner, (i18n.t(lang, "weekly", w=active, c=get("week_checks"), f=fails), []), local, silent=True)
         put("weekly_sent", week)
         put("week_checks", 0)
         put("week_fails", 0)
@@ -247,6 +249,14 @@ def health(db, now, local, failing, checked, worker_ok, event, overdue=False):
     return len(notices)
 
 
+def count_unfinished(db, run_number):
+    """GitHub numbers the runs. A gap since the last run that finished (and got its state saved) means runs that
+    crashed or couldn't save; they can't count themselves, so the next run adds them to the week's failed runs."""
+    last = int(store.meta_get(db, "last_ok_run", "0"))
+    if run_number and last:
+        store.meta_set(db, "week_fails", int(store.meta_get(db, "week_fails", "0")) + max(0, run_number - last - 1))
+
+
 def main():
     t0 = time.time()
     now = datetime.now(timezone.utc).replace(tzinfo=None, microsecond=0)
@@ -254,6 +264,8 @@ def main():
     db = store.connect(os.environ.get("STATE_DB", "state.db"))
     runs = int(store.meta_get(db, "runs", "0")) + 1
     store.meta_set(db, "runs", runs)
+    run_number = int(os.environ.get("GITHUB_RUN_NUMBER", "0"))
+    count_unfinished(db, run_number)
     forced, searches, commands, worker_ok = set(), [], 0, True
     for _ in range(10):  # drain: commands may keep arriving while we work
         items = try_worker("/job/take")
@@ -277,6 +289,8 @@ def main():
     print(f"run #{runs}: commands={commands} watches_checked={checked} deferred={deferred} units={units} failed_units={bad} "
           f"failing_ops={len(failing)} worker_ok={worker_ok} messages={sent} notices={notices} snapshots={snaps} "
           f"fetch={fetch_s:.1f}s total={time.time() - t0:.1f}s")
+    if run_number:
+        store.meta_set(db, "last_ok_run", run_number)
     return 0
 
 
