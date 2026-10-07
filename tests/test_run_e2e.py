@@ -165,6 +165,76 @@ class FullRuns(unittest.TestCase):
         self.assertNotIn("st:1", json.dumps(w.snaps["1:list"]["kb"]))
 
 
+class Friends(FullRuns):
+    def test_days_of_use(self):
+        pass
+
+    def test_a_friend_from_first_watch_to_removal(self):
+        w = self.w
+        to = lambda chat: [m["text"] for m in w.sent if m["chat_id"] == chat]
+        for day in range(10, 16):                                  # 6 watches: the 6th is over the friend's cap
+            w.enqueue(42, "form", form("watch", out={"d": [f"2026-11-{day}"], "w": None}, pax="young", fares=["T:FrecciaYOUNG"]))
+        w.enqueue(1, "form", form("watch"))
+        w.enqueue(42, "revoke", {"user_id": 1})                  # a friend can't stop anyone's watches
+        self.run_at(datetime(2026, 10, 7, 8, 0))
+        self.assertEqual(len(to(42)), 5 + 1)                       # 5 statuses + the cap message
+        self.assertTrue(any("at most 5" in t for t in to(42)))
+        self.assertEqual(len(to(1)), 1)
+        self.assertEqual(len(w.snaps["42:list"]["kb"]), 5)
+        self.assertEqual(len(w.snaps["1:list"]["kb"]), 1)
+
+        w.price += 5                                               # the friend's fare watches alert, in the friend's chat
+        self.run_at(datetime(2026, 10, 7, 10, 30))
+        self.assertEqual(sum("Price up" in t for t in to(42)), 5)
+        self.assertFalse(any("FrecciaYOUNG" in t for t in to(1)))
+
+        w.enqueue(1, "revoke", {"user_id": 42})                  # the Owner removes the friend
+        w.price += 5
+        self.run_at(datetime(2026, 10, 7, 13, 0))
+        self.assertEqual(to(42), [])                               # nothing more for them
+        self.assertEqual(w.snaps["42:list"]["kb"], [])
+        self.assertEqual(len(w.snaps["1:list"]["kb"]), 1)          # the Owner's watch untouched
+
+    def test_owner_hears_once_when_capacity_runs_short(self):
+        notices = lambda: [m["text"] for m in self.w.sent if m["chat_id"] == 1 and "capacity" in m["text"]]
+        with mock.patch.object(run.schedule, "load", return_value=0.8):
+            self.run_at(datetime(2026, 10, 7, 8, 0))
+            self.assertEqual(len(notices()), 1)
+            self.run_at(datetime(2026, 10, 7, 9, 0))
+            self.assertEqual(notices(), [])
+        with mock.patch.object(run.schedule, "load", return_value=0.5):
+            self.run_at(datetime(2026, 10, 7, 10, 0))
+        with mock.patch.object(run.schedule, "load", return_value=0.8):
+            self.run_at(datetime(2026, 10, 7, 11, 0))
+            self.assertEqual(len(notices()), 1)                    # re-armed after dropping below 60 %
+
+
+class CustomPeriod(FullRuns):
+    def test_days_of_use(self):
+        pass
+
+    def test_three_months_three_messages(self):
+        w = self.w
+        w.enqueue(1, "form", form("watch", out={"d": ["2026-11-20", "2027-01-15"], "w": None}))
+        self.run_at(datetime(2026, 10, 7, 8, 0))
+        parts = [m for m in w.sent if "🚄" in m["text"]]
+        self.assertEqual([("(1/3)" in p["text"], "(2/3)" in p["text"], "(3/3)" in p["text"]) for p in parts],
+                         [(True, False, False), (False, True, False), (False, False, True)])
+        self.assertIn("20 Nov", parts[0]["text"])                  # each part lists its own month only
+        self.assertNotIn("Dec", parts[0]["text"].split("\n", 2)[2])
+        self.assertIn("15 Jan", parts[2]["text"])
+        kb = [[b["text"] for b in row] for row in parts[2]["reply_markup"]["inline_keyboard"]]
+        self.assertIn("🔄 Check now", sum(kb, []))                  # the watch's buttons on the last part only
+        self.assertNotIn("🔄 Check now", sum([[b["text"] for b in r] for r in parts[0].get("reply_markup", {}).get("inline_keyboard", [])], []))
+        self.assertEqual(len(w.snaps["1:status:1"]["parts"]), 3)
+        w.price -= 3
+        self.run_at(datetime(2026, 10, 7, 11, 0))
+        alerts = [m for m in w.sent if "New low" in m["text"]]
+        self.assertEqual(len(alerts), 1)                           # one alert message, all 57 days summarised
+        self.assertLess(len(alerts[0]["text"]), 4096)
+        self.assertEqual([b["text"] for b in alerts[0]["reply_markup"]["inline_keyboard"][0]], ["🎫 Book on Italo", "🎫 Book on Trenitalia"])
+
+
 class PoisonCommand(FullRuns):
     def test_days_of_use(self):
         pass
