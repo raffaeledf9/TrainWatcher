@@ -50,5 +50,8 @@ jobs:
           openssl enc -aes-256-cbc -pbkdf2 -iter 200000 -salt -pass env:STATE_KEY -in state.db -out /tmp/state.db.enc
           cd "$(mktemp -d)" && cp /tmp/state.db.enc . && git init -q -b state && git add state.db.enc
           git -c user.name=trainwatcher -c user.email=trainwatcher@users.noreply.github.com commit -qm "state"
-          git push -q -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" state
-          echo "state saved"
+          for i in 1 2 3; do   # GitHub occasionally answers 500; retry before failing the run
+            git push -q -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" state && echo "state saved" && exit 0
+            sleep $((i * 10))
+          done
+          exit 1
