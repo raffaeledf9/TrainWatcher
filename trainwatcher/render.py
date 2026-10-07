@@ -96,8 +96,8 @@ def italo_url(leg, d, passenger):
             f"&id=&{n}&chd=0&inf=0&pet=0&promo=&lang=it&startSearch=true")
 
 
-def book_rows(watch, lang, d=None, today=None):
-    leg = watch.legs[0]
+def book_rows(watch, lang, d=None, today=None, leg=None):
+    leg = leg or watch.legs[0]
     row = []
     d = d or max(leg.dates()[0], today or date.today())  # a past day would open an empty Italo search
     ops = [op for op in watch.operators if not watch.fares or any(op in f.split(":")[0] for f in watch.fares)]
@@ -186,9 +186,9 @@ def status(watch, views, checked_at, lang, today=None, search=False, total=None,
         body += _leg_block(view, leg, lang)
     if total is not None:
         body += ["", f"{t(lang, 'total')} <b>{price(total, lang)}</b>"]
-    shown = [v for v in views if v is not None]
-    cheapest = (shown[0].get("ties") if shown else None) or [None]
-    kb = book_rows(watch, lang, cheapest[0] and date.fromisoformat(cheapest[0].dep[:10]), today)
+    first = next((i for i, v in enumerate(views) if v is not None), 0)  # a month part may hold only the return leg
+    cheapest = (views[first] or {}).get("ties") or [None]
+    kb = book_rows(watch, lang, cheapest[0] and date.fromisoformat(cheapest[0].dep[:10]), today, watch.legs[first])
     if part and part[0] < part[1]:
         return "\n".join(head + body), kb
     low = total if watch.round_trip else (views[0] or {}).get("low")

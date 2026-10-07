@@ -2,18 +2,20 @@
 
 A personal Telegram bot that watches Trenitalia and Italo fares (mainly high-speed trains) and alerts when prices move.
 
-- **Search** once, or **watch** a route for a day, a few days or a month: cheapest fare or specific fares
-  (e.g. FrecciaYOUNG), one-way or round trip, with an optional max price.
+- **Search** once, or **watch** a route for a day, a month or a custom period (up to 92 days, one message per month):
+  cheapest fare or specific fares (e.g. FrecciaYOUNG), one-way or round trip, with an optional max price.
 - Alerts on new lows, rises (for fare watches), going under your max, sold out / back on sale, purchase-window deadlines.
   Quiet at night (23:00–07:00).
 - English or Italian.
+- **Friends**: the owner shares one invite link (`/invite`), approves each person once and can remove them (`/friends`).
+  Friends get up to 5 watches and a search limit; capacity is shared.
 
 ## How it runs (no server, no credit card)
 
 | Part | Does |
 |---|---|
 | **GitHub Actions** (`.github/workflows/run.yml`) | Fetches prices (the operators block cloud IPs, GitHub runners work), sends alerts, keeps state AES-256-encrypted on the `state` branch. |
-| **Cloudflare Worker** (`worker/`) | Telegram webhook with instant replies from D1 snapshots, serves the Mini App form (`webapp/`), starts a run on demand and whenever a watch is due (no watches, no runs besides GitHub's hourly fallback). |
+| **Cloudflare Worker** (`worker/`) | Telegram webhook with instant replies from D1 snapshots, serves the Mini App form (`webapp/`), starts a run on demand, whenever a watch is due, and every 2 hours when idle (GitHub's own hourly fallback schedule is unreliable: it ran 4 times in a day). |
 | **Telegram** | The chat, the menu button that opens the form, the alerts. |
 
 Why: [docs/adr](docs/adr). Glossary: [CONTEXT.md](CONTEXT.md).

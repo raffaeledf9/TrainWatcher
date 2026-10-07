@@ -63,6 +63,7 @@ async function telegram(req, env, ctx) {
   if (msg && typeof msg.text === "string") {
     const chat = msg.chat.id, [word, arg] = msg.text.trim().split(/\s+/), cmd = word.toLowerCase().replace(/@.*$/, "");
     if (cmd === "/start") {
+      ctx.waitUntil(commands(env, chat, lang, owner));
       if (!(await snap(env, `${uid}:lang`))) return langPrompt(chat, S, from.language_code);
       ctx.waitUntil(menu(env, origin, chat, lang));
       return send(chat, S.welcome);
@@ -97,7 +98,7 @@ async function telegram(req, env, ctx) {
     if (act === "lang" && (arg === "en" || arg === "it")) {
       await putSnap(env, `${uid}:lang`, uid, arg);
       await enqueue(env, uid, "lang", { lang: arg });
-      ctx.waitUntil(menu(env, origin, chat, arg));
+      ctx.waitUntil(Promise.all([menu(env, origin, chat, arg), commands(env, chat, arg, owner)]));
       const S2 = await strings(env, arg);
       return Response.json({ method: "editMessageText", chat_id: chat, message_id: mid, text: S2.lang_set + "\n\n" + S2.welcome });
     }
@@ -157,7 +158,8 @@ async function decideFriend(env, ctx, origin, act, arg, chat, mid, S) {
     await putSnap(env, `${row.id}:lang`, row.id, lang);
     await enqueue(env, row.id, "lang", { lang });
     await tg(env, "sendMessage", { chat_id: row.id, text: F.allowed_friend + "\n\n" + F.lang_q, reply_markup: { inline_keyboard: langKb(row.lang) } });
-    await menu(env, origin, row.id, row.lang || "en");
+    await menu(env, origin, row.id, lang);
+    await commands(env, row.id, lang, false);
   } else if (status === "removed" && row.status === "allowed") {
     await enqueue(env, Number(env.OWNER_CHAT_ID), "revoke", { user_id: row.id });
     ctx.waitUntil(dispatch(env, "command"));
@@ -204,6 +206,16 @@ async function metaGet(env, k) {
 
 async function metaPut(env, k, v) {
   await env.DB.prepare("INSERT INTO meta (k, v) VALUES (?1, ?2) ON CONFLICT(k) DO UPDATE SET v = ?2").bind(k, v).run();
+}
+
+// The "/" command menu of one chat, in its language; the Owner also gets /invite and /friends.
+const COMMANDS = { en: [["list", "Your watches"], ["past", "Finished watches"], ["language", "Language"], ["help", "Help"]],
+  it: [["list", "I tuoi monitoraggi"], ["past", "Monitoraggi conclusi"], ["language", "Lingua"], ["help", "Aiuto"]] };
+const OWNER_COMMANDS = { en: [["invite", "Invite link"], ["friends", "Who can use the bot"]],
+  it: [["invite", "Link di invito"], ["friends", "Chi può usare il bot"]] };
+function commands(env, chat_id, lang, owner) {
+  const l = lang === "it" ? "it" : "en", list = [...COMMANDS[l], ...(owner ? OWNER_COMMANDS[l] : [])];
+  return tg(env, "setMyCommands", { commands: list.map(([command, description]) => ({ command, description })), scope: { type: "chat", chat_id } });
 }
 
 // The menu button opens the Mini App form (served from this Worker's assets) in the user's language.
@@ -345,8 +357,8 @@ async function jobApi(req, env, path) {
 }
 
 // Which run to start this minute, if any. Runs start only when there is work: a queued command (at once), a due
-// watch (checked every 5 minutes), or a heartbeat after 2 hours without a finished run (GitHub disables the hourly
-// fallback schedule of a repo without activity). While a started run hasn't finished for 10 minutes the job is
+// watch (checked every 5 minutes), or a heartbeat after 2 hours without a finished run (GitHub's hourly fallback schedule
+// drops most runs, and is disabled in a repo without activity). While a started run hasn't finished for 10 minutes the job is
 // failing: retry every 30 minutes instead of flooding GitHub with failing runs.
 function decide(m, pending, due, minute, now) {
   const stuck = m.pending_since && now - Number(m.pending_since) > 10 * MIN;
@@ -360,7 +372,7 @@ function decide(m, pending, due, minute, now) {
 
 // Dead-man switch (map ticket 13): tell the Owner when runs stop finishing, and when they are back. Runs start only
 // when there is work, so silence alone is normal: alarm when a run this Worker started hasn't finished within
-// 30 minutes, or when nothing (not even GitHub's hourly fallback run) has finished for 3 hours.
+// 30 minutes, or when nothing (not even the 2-hour heartbeat) has finished for 3 hours.
 // The job watches this Worker in turn (run.py health).
 function jobDead(m, now) {
   if (!m.last_run_ok) return false;

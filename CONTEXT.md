@@ -23,7 +23,7 @@ A Watch whose last departure has passed; it is no longer checked, but its histor
 _Avoid_: expired, archived, deleted
 
 **Leg**:
-One direction of a Watch: origin, destination, a set of travel days and an optional departure-time window.
+One direction of a Watch: origin, destination, its travel days (one day, a month, or a custom period of up to 92 days) and an optional departure-time window.
 _Avoid_: segment, journey (operator API terms)
 
 **Passenger type**:
@@ -31,8 +31,16 @@ The single traveller a Watch is priced for: adult, young or senior. It decides w
 _Avoid_: profile, age group, pax
 
 **Owner**:
-The single Telegram chat allowed to use the bot; the first chat to send `/start`.
+The person who runs the bot: the only one with no limits, who invites and removes Friends and receives every maintenance notice.
 _Avoid_: user, admin
+
+**Friend**:
+Someone the Owner allowed after they opened the Invite link. Friends have their own Watches (at most 5) and a limit on searches per hour; the Owner can remove them, which stops their Watches.
+_Avoid_: guest, member, user
+
+**Invite link**:
+The one link that lets a person ask the Owner for access. Each person asks once; the Owner allows or declines. A new link replaces the old one.
+_Avoid_: invitation code, referral
 
 **Max price**:
 The Owner's price ceiling for a Watch: per Leg for one-way watches, total for round trips. It gates Drop alerts of Cheapest watches only; Fare watch alerts are just marked under or above it, and the Status view ignores it.
