@@ -291,19 +291,30 @@ def _round_trip_alert(watch, e, views, lang, today):
 
 
 # ---------- /list (L2 v2) and small replies ----------
-def watch_list(items, lang, today=None):
-    """items: [(watch, lowest_offer_or_None, lowest_price_or_None, checked_at_or_None)] in display order."""
+LIST_PAGE = 40  # watches per /list message: Telegram allows at most 100 buttons and 4096 characters in one
+
+
+def watch_list_parts(items, lang, today=None):
+    """/list as one message per LIST_PAGE watches (a heavy user would exceed Telegram's limits). -> [(text, kb)]"""
+    if not items:
+        return [watch_list(items, lang, today)]
+    return [watch_list(items[i:i + LIST_PAGE], lang, today, start=i) for i in range(0, len(items), LIST_PAGE)]
+
+
+def watch_list(items, lang, today=None, start=0):
+    """items: [(watch, lowest_offer_or_None, lowest_price_or_None, checked_at_or_None)] in display order;
+    start: how many watches earlier pages already listed (numbering continues, the title only on the first)."""
     if not items:
         return t(lang, "list_empty"), []
     nums = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
     recap, kb = [], []
-    for i, (w, o, low, at) in enumerate(items):
+    for i, (w, o, low, at) in enumerate(items, start):
         n = nums[i] if i < len(nums) else f"{i + 1}."
         recap.append(f"{n} {route(w, lang, short=True)} · {watch_days(w, lang, today)}" + (f" · {last_check(at, lang)}" if at else ""))
         fare = f" · {o.fare} {price(low, lang)}" if o is not None else (f" · {price(low, lang)}" if low is not None else "")
         kb.append([{"text": f"{n} {station_name(w.legs[0].origin, lang)}{' ⇄ ' if w.round_trip else ' → '}{station_name(w.legs[0].destination, lang)} · {watch_days(w, lang, today)}{fare}",
                     "callback_data": f"st:{w.id}"}])
-    return f"📋 <b>{t(lang, 'list_t')}</b>\n\n" + "\n".join(recap), kb
+    return (f"📋 <b>{t(lang, 'list_t')}</b>\n\n" if not start else "") + "\n".join(recap), kb
 
 
 def delete_question(n, watch, lang):

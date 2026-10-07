@@ -24,6 +24,7 @@ GH_TOKEN_EXPIRES = date(2027, 10, 5)  # the Worker's fine-grained token; update 
 TOKEN_URL = "https://github.com/settings/personal-access-tokens"
 OP_NAME = {"T": "Trenitalia", "I": "Italo"}
 FRIEND_MAX_WATCHES = 5  # the Owner has no cap
+PAST_SHOWN = 40         # finished watches listed in /past
 
 
 # ---------- I/O ----------
@@ -276,10 +277,13 @@ def snapshots(db, now, local):
                 rows += watch_snapshots(db, uid, n, w, lang, local, items)
             except Exception as e:  # one failing watch must not leave everyone without instant replies
                 print("snapshot failed", type(e).__name__)
-        text, kb = render.watch_list(items, lang, local.date())
-        rows.append({"key": f"{uid}:list", "user_id": uid, "body": json.dumps({"text": text, "kb": kb})})
+        rows.append({"key": f"{uid}:list", "user_id": uid, "body": json.dumps(
+            {"parts": [{"text": t, "kb": k} for t, k in render.watch_list_parts(items, lang, local.date())]})})
         past = store.watches(db, uid, status="past")
-        ptext = f"🗂 <b>{i18n.t(lang, 'past_t')}</b>\n\n" + "\n".join(f"• {render.route(w, lang, short=True)} · {render.watch_days(w, lang)}" for w in past) if past else i18n.t(lang, "past_empty")
+        # the latest PAST_SHOWN only: months of use would exceed Telegram's 4096 characters (73 long lines fit)
+        older = [i18n.t(lang, "more_past", n=len(past) - PAST_SHOWN)] if len(past) > PAST_SHOWN else []
+        ptext = (f"🗂 <b>{i18n.t(lang, 'past_t')}</b>\n\n" + "\n".join(older + [f"• {render.route(w, lang, short=True)} · {render.watch_days(w, lang)}"
+                                                                         for w in past[-PAST_SHOWN:]])) if past else i18n.t(lang, "past_empty")
         # 📈 for the most recent ones: their last chart stays in the Worker's snapshots after they end
         pkb = [[{"text": f"📈 {render.route(w, lang, short=True)} · {render.watch_days(w, lang)}", "callback_data": f"hi:{w.id}"}] for w in past[-10:]]
         rows.append({"key": f"{uid}:past", "user_id": uid, "body": json.dumps({"text": ptext, "kb": pkb})})

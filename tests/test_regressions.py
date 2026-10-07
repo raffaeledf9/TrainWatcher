@@ -6,7 +6,7 @@ import subprocess
 import tempfile
 import unittest
 import urllib.error
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from io import BytesIO
 from pathlib import Path
 from unittest import mock
@@ -174,6 +174,18 @@ class SecondPass(unittest.TestCase):
         gone = {"kind": "gone", "reason": "window", "low": None, "prev": 60.0, "legs": None, "prev_legs": None}
         text, _ = render.alert(w, [gone], [{"ties": [o]}, {"ties": [o]}], NOW, "en", date(2026, 11, 8))
         self.assertIn("3 days before departure", text)
+
+    def test_a_long_list_stays_within_telegram_limits(self):
+        items = []
+        for i in range(120):                               # 49 % of capacity: allowed without any warning
+            w = watch(out={"d": [str(date(2026, 11, 1) + timedelta(days=i % 60))], "w": None})
+            w.id = i + 1
+            items.append((w, None, None, None))
+        parts = render.watch_list_parts(items, "it", date(2026, 10, 6))
+        self.assertTrue(all(len(t) < 4096 and sum(len(r) for r in kb) <= 100 for t, kb in parts))
+        self.assertEqual(sum(len(kb) for _, kb in parts), 120)            # every watch still has its button
+        self.assertIn("1️⃣", parts[0][0])
+        self.assertIn("120.", parts[-1][0])                               # numbering continues across parts
 
     def test_first_time_on_sale_is_not_back(self):
         w = watch()

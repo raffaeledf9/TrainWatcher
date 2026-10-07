@@ -90,6 +90,11 @@ class FakeSession:
         return self.w.italo_offers(origin, dest, day, passenger, ar=True), self.w.italo_offers(dest, origin, return_day, passenger, ar=True)
 
 
+def list_kb(snap):
+    """All /list buttons, across its pages."""
+    return [row for part in snap["parts"] for row in part["kb"]]
+
+
 def form(mode, **data):
     d = {"v": 1, "from": "milano-tutte", "to": "roma-termini", "out": {"d": ["2026-11-10"], "w": None}, "ops": ["T", "I"]}
     d.update(data)
@@ -162,7 +167,7 @@ class FullRuns(unittest.TestCase):
         self.run_at(datetime(2026, 11, 11, 8, 0))
         past = w.snaps["1:past"]
         self.assertIn("hi:1", json.dumps(past["kb"]))
-        self.assertNotIn("st:1", json.dumps(w.snaps["1:list"]["kb"]))
+        self.assertNotIn("st:1", json.dumps(list_kb(w.snaps["1:list"])))
 
 
 class Friends(FullRuns):
@@ -180,8 +185,8 @@ class Friends(FullRuns):
         self.assertEqual(len(to(42)), 5 + 1)                       # 5 statuses + the cap message
         self.assertTrue(any("at most 5" in t for t in to(42)))
         self.assertEqual(len(to(1)), 1)
-        self.assertEqual(len(w.snaps["42:list"]["kb"]), 5)
-        self.assertEqual(len(w.snaps["1:list"]["kb"]), 1)
+        self.assertEqual(len(list_kb(w.snaps["42:list"])), 5)
+        self.assertEqual(len(list_kb(w.snaps["1:list"])), 1)
 
         w.price += 5                                               # the friend's fare watches alert, in the friend's chat
         self.run_at(datetime(2026, 10, 7, 10, 30))
@@ -192,8 +197,8 @@ class Friends(FullRuns):
         w.price += 5
         self.run_at(datetime(2026, 10, 7, 13, 0))
         self.assertEqual(to(42), [])                               # nothing more for them
-        self.assertEqual(w.snaps["42:list"]["kb"], [])
-        self.assertEqual(len(w.snaps["1:list"]["kb"]), 1)          # the Owner's watch untouched
+        self.assertEqual(list_kb(w.snaps["42:list"]), [])
+        self.assertEqual(len(list_kb(w.snaps["1:list"])), 1)          # the Owner's watch untouched
 
     def test_owner_hears_once_when_capacity_runs_short(self):
         notices = lambda: [m["text"] for m in self.w.sent if m["chat_id"] == 1 and "capacity" in m["text"]]
@@ -262,6 +267,24 @@ class LanguageRace(FullRuns):
         self.w.snaps["1:lang"] = "it"           # chosen in the Worker while a run (which hasn't seen the choice yet) works
         self.run_at(datetime(2026, 10, 7, 8, 0))
         self.assertEqual(self.w.snaps["1:lang"], "it")
+
+
+class LongHistory(FullRuns):
+    def test_days_of_use(self):
+        pass
+
+    def test_past_stays_within_telegram_limits_after_months_of_use(self):
+        db = run.store.connect(os.environ["STATE_DB"])
+        for i in range(150):                                    # a year of finished watches
+            w = run.model.from_payload(form("watch", out={"d": ["2026-11-20", "2027-01-10"], "w": None},     # the longest lines
+                                            ret={"d": ["2026-11-25", "2027-01-20"], "w": None})["data"], 1,
+                                       {"milano-tutte", "roma-termini"}, datetime(2026, 10, 7).date())
+            run.store.set_status(db, run.store.add_watch(db, w, datetime(2026, 10, 7)), "past")
+        db.close()
+        self.run_at(datetime(2026, 10, 7, 8, 0))
+        past = self.w.snaps["1:past"]
+        self.assertLess(len(past["text"]), 4096)
+        self.assertLessEqual(sum(len(r) for r in past["kb"]), 100)
 
 
 class PoisonCommand(FullRuns):
