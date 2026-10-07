@@ -41,5 +41,25 @@ class InitData(unittest.TestCase):
         self.assertEqual(out, {"ok": {"id": 42}, "tampered": None, "old": None, "other_bot": None, "no_hash": None})
 
 
+@unittest.skipUnless(shutil.which("node"), "node not installed")
+class JobDeadManSwitch(unittest.TestCase):
+    def test_idle_is_quiet_unfinished_runs_are_not(self):
+        m = 60_000
+        cases = {"idle_2h": [{"last_run_ok": 0}, 120 * m], "idle_4h": [{"last_run_ok": 0}, 240 * m],
+                 "started_20min_ago": [{"last_run_ok": 0, "pending_since": 60 * m}, 80 * m],
+                 "started_40min_ago": [{"last_run_ok": 0, "pending_since": 60 * m}, 100 * m], "never_ran": [{}, 999 * m]}
+        for c in cases.values():  # D1 hands meta values back as strings
+            c[0] = {k: str(v) for k, v in c[0].items()}
+        with tempfile.TemporaryDirectory() as d:
+            (Path(d) / "w.mjs").write_text(WORKER.read_text(encoding="utf-8") + "\nexport { jobDead };\n", encoding="utf-8")
+            (Path(d) / "t.mjs").write_text(
+                "const { jobDead } = await import('./w.mjs');\n"
+                f"const c = {json.dumps(cases)}, out = {{}};\n"
+                "for (const k in c) out[k] = jobDead(c[k][0], c[k][1]);\n"
+                "console.log(JSON.stringify(out));\n", encoding="utf-8")
+            out = json.loads(subprocess.run(["node", "t.mjs"], cwd=d, capture_output=True, text=True, check=True).stdout)
+        self.assertEqual(out, {"idle_2h": False, "idle_4h": True, "started_20min_ago": False, "started_40min_ago": True, "never_ran": False})
+
+
 if __name__ == "__main__":
     unittest.main()

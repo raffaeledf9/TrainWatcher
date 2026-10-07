@@ -13,7 +13,7 @@ A personal Telegram bot that watches Trenitalia and Italo fares (mainly high-spe
 | Part | Does |
 |---|---|
 | **GitHub Actions** (`.github/workflows/run.yml`) | Fetches prices (the operators block cloud IPs, GitHub runners work), sends alerts, keeps state AES-256-encrypted on the `state` branch. |
-| **Cloudflare Worker** (`worker/`) | Telegram webhook with instant replies from D1 snapshots, serves the Mini App form (`webapp/`), starts a run every 5 minutes or on demand. |
+| **Cloudflare Worker** (`worker/`) | Telegram webhook with instant replies from D1 snapshots, serves the Mini App form (`webapp/`), starts a run on demand and whenever a watch is due (no watches, no runs besides GitHub's hourly fallback). |
 | **Telegram** | The chat, the menu button that opens the form, the alerts. |
 
 Why: [docs/adr](docs/adr). Glossary: [CONTEXT.md](CONTEXT.md).
