@@ -10,7 +10,7 @@ _MO = {EN: ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct"
 S = {
     EN: dict(
         book_i="🎫 Book on Italo", book_t="🎫 Book on Trenitalia", hist="📈 History", now="🔄 Check now", dele="🗑 Delete",
-        lowest="lowest", trains="trains", train="train", on_sale="Now on sale", next_="Next cheapest", above="Lowest is above your max", last_check="last check",
+        lowest="lowest", trains="trains", train="train", on_sale="Now on sale", more_ties="…and {n} more trains at this price", next_="Next cheapest", above="Lowest is above your max", last_check="last check",
         adult="Adult", young="Young", senior="Senior", cheapest="Cheapest fare", left="left", none_found="No matching trains right now.",
         other_fare="cheapest other fare", out="Outbound", ret="Return", total="Total",
         up="Price up", down="New low", under="Under your max", back="Back on sale", gone="no longer available",
@@ -42,7 +42,7 @@ S = {
     ),
     IT: dict(
         book_i="🎫 Prenota su Italo", book_t="🎫 Prenota su Trenitalia", hist="📈 Storico", now="🔄 Aggiorna", dele="🗑 Elimina",
-        lowest="il più basso", trains="treni", train="treno", on_sale="In vendita", next_="Altri prezzi", above="Il prezzo più basso supera il tuo massimo di", last_check="ultimo controllo",
+        lowest="il più basso", trains="treni", train="treno", on_sale="In vendita", more_ties="…e altri {n} treni a questo prezzo", next_="Altri prezzi", above="Il prezzo più basso supera il tuo massimo di", last_check="ultimo controllo",
         adult="Adulto", young="Giovane", senior="Senior", cheapest="Più economica", left="posti", none_found="Nessun treno corrispondente al momento.",
         other_fare="tariffa più economica alternativa", out="Andata", ret="Ritorno", total="Totale",
         up="Prezzo in aumento", down="Nuovo minimo", under="Sotto il tuo massimo", back="Di nuovo in vendita", gone="non più disponibile",
@@ -74,6 +74,23 @@ S = {
         token="🔑 Il token GitHub scade il {d}. Creane uno nuovo ({url}) e fallo installare a Claude, altrimenti i controlli rallentano a uno all'ora.",
     ),
 }
+
+
+# model.Invalid reasons (English in the code) for the form-refusal message
+_REASONS_IT = {
+    "bad form": "modulo non valido", "bad dates": "date non valide", "bad max price": "prezzo massimo non valido", "bad operators": "operatori non validi",
+    "bad passenger type": "tipo di passeggero non valido", "bad time window": "fascia oraria non valida",
+    "dates are in the past": "le date sono passate", "dates too far or too many": "date troppo lontane o troppe",
+    "fare not available for this passenger type": "tariffa non disponibile per questo passeggero",
+    "fare not available for this trip": "tariffa non disponibile per questo viaggio",
+    "origin and destination are the same": "partenza e arrivo coincidono", "return before outbound": "il ritorno precede l'andata",
+    "time window ends before it starts": "la fascia oraria finisce prima di iniziare", "unknown class": "classe sconosciuta",
+    "unknown fare": "tariffa sconosciuta", "unknown station": "stazione sconosciuta", "unsupported form version": "versione del modulo non supportata",
+}
+
+
+def reason(lang, why):
+    return _REASONS_IT.get(why, why) if lang == IT else why
 
 
 def t(lang, key, **kw):

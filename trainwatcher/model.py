@@ -103,7 +103,17 @@ class Watch:
 
 
 def from_payload(p, user_id, station_keys, today=None):
-    """Build and validate a Watch from the Mini App payload (see the form's payload())."""
+    """Build and validate a Watch from the Mini App payload (see the form's payload()). A malformed value of any
+    type is refused as Invalid, never raised as another exception (that would crash the run on every retry)."""
+    try:
+        return _from_payload(p, user_id, station_keys, today)
+    except Invalid:
+        raise
+    except (TypeError, ValueError, KeyError, AttributeError, OverflowError):
+        raise Invalid("bad form")
+
+
+def _from_payload(p, user_id, station_keys, today):
     today = today or date.today()
     if not isinstance(p, dict) or p.get("v") != 1:
         raise Invalid("unsupported form version")

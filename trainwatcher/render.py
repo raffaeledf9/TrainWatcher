@@ -9,6 +9,7 @@ from trainwatcher.i18n import EN, day, month, price, t
 from trainwatcher.offers import ITALO
 
 OPS = {"FR": "Frecciarossa", "FA": "Frecciargento", "FB": "Frecciabianca", "IT": "Italo"}
+MAX_TIES = 8  # trains listed in full; Telegram rejects messages over 4096 characters (a flat month had 120 ties)
 TRENITALIA_URL = "https://www.lefrecce.it/Channels.Website.WEB/#/?tab=biglietto"
 
 
@@ -99,9 +100,10 @@ def book_rows(watch, lang, d=None, today=None):
     leg = watch.legs[0]
     row = []
     d = d or max(leg.dates()[0], today or date.today())  # a past day would open an empty Italo search
-    if "I" in watch.operators and (u := italo_url(leg, d, watch.passenger)):
+    ops = [op for op in watch.operators if not watch.fares or any(op in f.split(":")[0] for f in watch.fares)]
+    if "I" in ops and (u := italo_url(leg, d, watch.passenger)):
         row.append({"text": t(lang, "book_i"), "url": u})
-    if "T" in watch.operators:
+    if "T" in ops:
         row.append({"text": t(lang, "book_t"), "url": TRENITALIA_URL})
     return [row] if row else []
 
@@ -132,7 +134,9 @@ def _leg_block(view, leg, lang):
         return lines
     n = len(view["ties"])
     lines.append(f"<b>{price(view['low'], lang)}</b> {t(lang, 'lowest')} · {n} {t(lang, 'trains' if n > 1 else 'train')}")
-    lines += [train_line(o, lang, multi, leg) for o in view["ties"]]
+    lines += [train_line(o, lang, multi, leg) for o in view["ties"][:MAX_TIES]]
+    if n > MAX_TIES:
+        lines.append(t(lang, "more_ties", n=n - MAX_TIES))
     if view["others"]:
         lines += ["", f"<i>{t(lang, 'next_')}</i>"]
         lines += [f"• {price(o.price, lang)} {(day(date.fromisoformat(o.dep[:10]), lang) + ' ') if multi else ''}{departs(o, leg)} {short_train(o)} · {escape(o.fare)}"
@@ -192,14 +196,16 @@ def alert(watch, events, views, checked_at, lang, today=None):
         icon, key = TITLES[e["kind"]]
         lines = [f"{icon} <b>{t(lang, key)}</b> · {escape(fare_label(watch, lang))}", f"{route(watch, lang)} · {watch_days(watch, lang, today)}", ""]
         multi = any(len(l.dates()) > 1 for l in watch.legs)
-        for o, leg in ties:
+        for o, leg in ties[:MAX_TIES]:
             old = f" <s>{price(e['prev'], lang)}</s>" if e["kind"] in ("drop", "rise") and e.get("prev") is not None else ""
             d = (day(date.fromisoformat(o.dep[:10]), lang) + " ") if multi else ""
             lines.append(f"<b>{price(o.price, lang)}</b>{old} — {OPS.get(o.category, o.category)} {o.train} {d}{times(o, leg)} · {o.cls}")
+        if len(ties) > MAX_TIES:
+            lines.append(t(lang, "more_ties", n=len(ties) - MAX_TIES))
         lines.append("")
         lines += _notes(watch, e, lang)
         sections.append(lines)
-        trains += ties
+        trains += ties[:MAX_TIES]
     seen, row = set(), []
     for o, leg in trains:
         if (o.train, o.dep) not in seen:
