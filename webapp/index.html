@@ -287,7 +287,9 @@ function dateLabel(L) {
   if (L.mode === "d1") return fmt(L.d1, {weekday: "short", day: "numeric", month: "short", ...yr(L.d1)});
   if (L.dA === L.dB) return dm(L.dA);
   if (L.dA.slice(0, 7) === L.dB.slice(0, 7)) return +L.dA.slice(8) + "–" + dm(L.dB);
-  return fmt(L.dA, {day: "numeric", month: "short"}) + " – " + dm(L.dB);
+  // across months: numeric, to fit half a phone row; no year needed (no past days, at most 92 days long)
+  const num = s => +s.slice(8) + "/" + s.slice(5, 7);
+  return num(L.dA) + " – " + num(L.dB);
 }
 const legIcon = k => S.trip === "round" ? (k === "out" ? "→ " : "← ") : "📅 ";
 const timeLabel = L => L.tp === "custom" ? L.tA + "–" + L.tB : t(L.tp);
