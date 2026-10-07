@@ -48,8 +48,8 @@ def evaluate(watch, state, lowest, live_ok, today, legs=None, low_day=None):
         if prev is not None and live_ok:                 # gone only after a live Check confirmed it everywhere
             ev("gone", reason="window" if window_closed else "sold_out")
         # a failed Check proves nothing: keep the previous state and stay silent
-    elif prev is None:
-        ev("back")
+    elif prev is None:                                   # "back" only if it was ever on sale (else: sales just opened)
+        ev("back" if s.get("alerted_low") is not None else "on_sale")
         s["alerted_low"] = lowest
     elif watch.kind == "fare":
         if lowest != prev:                               # every change, any amount; max only marks it

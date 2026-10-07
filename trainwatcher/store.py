@@ -1,6 +1,7 @@
 """SQLite state (encrypted at rest by the workflow, ADR 0002). Multi-user-ready: everything is per user_id,
-access is Owner-only for now. Observations are stored only when an Offer's price or availability changes,
-and offers that vanish from a successful Check are recorded as unavailable (price NULL)."""
+access is Owner-only for now. Observations are stored only when an Offer's price or availability changes (not its
+seats left: that was 95 % of the rows and would push the state file towards GitHub's size limit), and offers
+that vanish from a successful Check are recorded as unavailable (price NULL)."""
 import json
 import sqlite3
 from datetime import datetime
@@ -119,7 +120,7 @@ def record(db, unit, offers, now):
         k = offer_key(unit, o)
         seen.add(k)
         r = db.execute("SELECT price, seats FROM offers_last WHERE key = ?", (k,)).fetchone()
-        if r is None or r["price"] != o.price or r["seats"] != o.seats:
+        if r is None or r["price"] != o.price:
             db.execute("INSERT INTO observations (key, at, price, seats) VALUES (?, ?, ?, ?)", (k, at, o.price, o.seats))
             changed.append(k)
         db.execute("INSERT INTO offers_last (key, unit, offer, price, seats, seen_at) VALUES (?, ?, ?, ?, ?, ?) "
@@ -133,6 +134,16 @@ def record(db, unit, offers, now):
             vanished.append(r["key"])
     db.commit()
     return changed, vanished
+
+
+def prune(db, today):
+    """Forget the current offers of days already past (never read again) and compact the file. -> units dropped."""
+    old = [u for (u,) in db.execute("SELECT DISTINCT unit FROM offers_last") if u.split("|")[3] < str(today)]
+    if old:
+        db.executemany("DELETE FROM offers_last WHERE unit = ?", [(u,) for u in old])
+        db.commit()
+        db.execute("VACUUM")
+    return len(old)
 
 
 def current_offers(db, unit):

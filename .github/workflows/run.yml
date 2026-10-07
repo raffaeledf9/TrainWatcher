@@ -49,8 +49,13 @@ jobs:
             [ "$i" = 3 ] && { echo "state fetch failed"; exit 1; }
             sleep $((i * 10))
           done
-          git show FETCH_HEAD:state.db.enc > state.db.enc
-          openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -pass env:STATE_KEY -in state.db.enc -out state.db
+          if git show FETCH_HEAD:state.db.gz.enc > state.enc 2>/dev/null; then   # gzip-compressed (current format)
+            openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -pass env:STATE_KEY -in state.enc -out state.db.gz
+            gunzip -c state.db.gz > state.db
+          else                                                                  # the older uncompressed format
+            git show FETCH_HEAD:state.db.enc > state.enc
+            openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -pass env:STATE_KEY -in state.enc -out state.db
+          fi
           echo "state restored"
       - name: Run
         run: python -m trainwatcher.run
@@ -58,8 +63,10 @@ jobs:
         # never overwrite good state after a failed restore; do save after a failed run (partial work is real)
         if: always() && steps.restore.outcome == 'success' && hashFiles('state.db') != ''
         run: |
-          openssl enc -aes-256-cbc -pbkdf2 -iter 200000 -salt -pass env:STATE_KEY -in state.db -out /tmp/state.db.enc
-          cd "$(mktemp -d)" && cp /tmp/state.db.enc . && git init -q -b state && git add state.db.enc
+          gzip -9 -c state.db > /tmp/state.db.gz   # SQLite full of JSON compresses several times over
+          openssl enc -aes-256-cbc -pbkdf2 -iter 200000 -salt -pass env:STATE_KEY -in /tmp/state.db.gz -out /tmp/state.db.gz.enc
+          echo "state size: $(stat -c %s state.db) bytes, saved $(stat -c %s /tmp/state.db.gz.enc)"
+          cd "$(mktemp -d)" && cp /tmp/state.db.gz.enc . && git init -q -b state && git add state.db.gz.enc
           git -c user.name=trainwatcher -c user.email=trainwatcher@users.noreply.github.com commit -qm "state"
           for i in 1 2 3; do   # GitHub occasionally answers 500; retry before failing the run
             git push -q -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" state && echo "state saved" && exit 0

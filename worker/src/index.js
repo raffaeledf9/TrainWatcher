@@ -154,7 +154,9 @@ async function tg(env, method, body) {
 }
 
 async function sendPhoto(env, chat_id, b64) {
-  const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+  // a plain loop: Uint8Array.from with a callback takes 8-20 ms of CPU on a chart, over the free plan's 10 ms
+  const bin = atob(b64), bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
   const form = new FormData();
   form.append("chat_id", String(chat_id));
   form.append("photo", new Blob([bytes], { type: "image/png" }), "chart.png");

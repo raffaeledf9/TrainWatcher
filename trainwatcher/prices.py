@@ -13,6 +13,10 @@ _FARE_ALIASES = {
 }
 
 
+# Frecciabianca has two classes instead of Frecciarossa's four levels (Owner decision 2026-10-07).
+_CLASS_ALIASES = {"2ª Classe": "Standard", "1ª Classe": "Business"}
+
+
 def fare_id(offer):
     if offer.same_day_ar:
         return "TI:A/R same day"
@@ -29,7 +33,8 @@ def matches(offer, watch, leg):
     op = "T" if offer.operator == TRENITALIA else "I"
     if op not in watch.operators or not leg.accepts(offer.dep):
         return False
-    if watch.classes and not any(offer.cls == c or offer.cls.startswith(c + " ") for c in watch.classes):
+    cls = _CLASS_ALIASES.get(offer.cls, offer.cls)
+    if watch.classes and not any(cls == c or cls.startswith(c + " ") for c in watch.classes):
         return False
     fid = fare_id(offer)
     if offer.same_day_ar and not watch.same_day:
