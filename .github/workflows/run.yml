@@ -33,14 +33,25 @@ jobs:
       - run: pip install -q -r requirements.txt
       - name: Restore state
         id: restore
+        # "no state branch yet" (first run ever) must never be confused with "GitHub didn't answer": the latter
+        # fails the step, so Save state is skipped and the real state is never overwritten with an empty one
         run: |
-          if git fetch -q --depth=1 origin state 2>/dev/null; then
-            git show FETCH_HEAD:state.db.enc > state.db.enc
-            openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -pass env:STATE_KEY -in state.db.enc -out state.db
-            echo "state restored"
-          else
-            echo "no state yet"
-          fi
+          rc=1
+          for i in 1 2 3; do
+            rc=0; git ls-remote --exit-code origin state >/dev/null 2>&1 || rc=$?
+            [ "$rc" = 0 ] || [ "$rc" = 2 ] && break
+            sleep $((i * 10))
+          done
+          if [ "$rc" = 2 ]; then echo "no state yet"; exit 0; fi
+          [ "$rc" = 0 ] || { echo "state branch unreachable"; exit 1; }
+          for i in 1 2 3; do
+            git fetch -q --depth=1 origin state && break
+            [ "$i" = 3 ] && { echo "state fetch failed"; exit 1; }
+            sleep $((i * 10))
+          done
+          git show FETCH_HEAD:state.db.enc > state.db.enc
+          openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -pass env:STATE_KEY -in state.db.enc -out state.db
+          echo "state restored"
       - name: Run
         run: python -m trainwatcher.run
       - name: Save state
