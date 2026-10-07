@@ -49,6 +49,11 @@ class WebappTest(unittest.TestCase):
             m = re.search(rf"^const {name} = (\d+);", HTML, re.M)
             self.assertEqual(int(m.group(1)), getattr(model, name), name)
 
+    def test_form_enforces_the_horizon_with_a_day_of_margin(self):
+        # the server counts from Rome's date; a phone a timezone ahead must not offer a day the server refuses
+        self.assertIn("const LAST_DAY = addDays(TODAY, HORIZON_DAYS - 1);", HTML)
+        self.assertIn('else if (firstLast(L)[0] > LAST_DAY) e[k] = t("e_far");', HTML)
+
     def test_fares_and_classes_match_the_model(self):
         self.assertEqual(const("FARES"), model.FARES)
         used = set(re.findall(r'"((?:T|I|TI):[^"]+)"', HTML))

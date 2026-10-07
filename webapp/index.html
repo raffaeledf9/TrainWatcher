@@ -96,7 +96,7 @@ const STR = {
     "max": "Max price (€)", "maxRT": "Max total price (€)", "opt": "optional",
     "rises": "Also alert when the price goes up", "risesFare": "Fare watches always alert on rises and drops",
     "review": "Review", "back": "Back", "create": "Create watch", "sending": "Sending…",
-    "e_station": "Pick a station from the list", "e_same": "From and To must differ", "e_date": "Pick a future date", "e_long": "Pick at most 92 days",
+    "e_station": "Pick a station from the list", "e_same": "From and To must differ", "e_date": "Pick a future date", "e_far": "Too far ahead: tickets aren't on sale yet", "e_long": "Pick at most 92 days",
     "e_time": "The end time must not be before the start time", "e_ret": "Return must not be before the outbound", "e_fares": "Pick at least one fare",
     "e_max": "Enter a price between 0 and 10,000 €", "e_pax": "not for this passenger",
     "noTg": "Open this form from the bot in Telegram: submitting only works there.", "noSt": "Could not load the station list.",
@@ -112,7 +112,7 @@ const STR = {
     "max": "Prezzo massimo (€)", "maxRT": "Prezzo massimo totale (€)", "opt": "facoltativo",
     "rises": "Avvisami anche quando il prezzo sale", "risesFare": "Con tariffe specifiche avvisi sempre su rialzi e ribassi",
     "review": "Riepilogo", "back": "Indietro", "create": "Crea monitoraggio", "sending": "Invio…",
-    "e_station": "Scegli una stazione dall'elenco", "e_same": "Partenza e arrivo devono essere diversi", "e_date": "Scegli una data futura", "e_long": "Scegli al massimo 92 giorni",
+    "e_station": "Scegli una stazione dall'elenco", "e_same": "Partenza e arrivo devono essere diversi", "e_date": "Scegli una data futura", "e_far": "Troppo avanti: i biglietti non sono ancora in vendita", "e_long": "Scegli al massimo 92 giorni",
     "e_time": "L'orario finale non può precedere quello iniziale", "e_ret": "Il ritorno non può precedere l'andata", "e_fares": "Scegli almeno una tariffa",
     "e_max": "Inserisci un prezzo tra 0 e 10.000 €", "e_pax": "non per questo passeggero",
     "noTg": "Apri questo modulo dal bot in Telegram: l'invio funziona solo lì.", "noSt": "Impossibile caricare l'elenco delle stazioni.",
@@ -144,7 +144,9 @@ const addDays = (s, n) => { const [y, m, d] = s.split("-").map(Number); return y
 const addMonths = (s, n) => ymd(new Date(+s.slice(0, 4), +s.slice(5, 7) - 1 + n, 1)).slice(0, 7);
 const monthEnd = s => `${s}-${pad(new Date(+s.slice(0, 4), +s.slice(5, 7), 0).getDate())}`;
 const TODAY = ymd(new Date());
-const LAST_DAY = addDays(TODAY, HORIZON_DAYS);  // rolling: a fixed date would grey out the whole calendar one day
+// rolling (a fixed date would grey out the whole calendar one day); a day short of the server's horizon, which
+// counts from Rome's date, so a phone in a timezone ahead of Italy still stays within it
+const LAST_DAY = addDays(TODAY, HORIZON_DAYS - 1);
 const fmt = (s, o) => { const r = new Intl.DateTimeFormat(lang === "it" ? "it-IT" : "en-GB", o).format(new Date(s + "T12:00:00")); return r[0].toUpperCase() + r.slice(1); };
 
 // ---------- state ----------
@@ -181,6 +183,7 @@ function validate() {
   for (const k of legKeys()) {
     const L = S[k];
     if (firstLast(L)[1] < TODAY) e[k] = t("e_date");
+    else if (firstLast(L)[0] > LAST_DAY) e[k] = t("e_far");
     else if (dayCount(L) > MAX_DAYS) e[k] = t("e_long");
     else if (L.tp === "custom" && !(L.tA && L.tB && L.tA <= L.tB)) e[k] = t("e_time");
   }
