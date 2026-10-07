@@ -22,11 +22,12 @@ const D1 = { prepare(q) { const s = { args: [], bind(...a) { s.args = a; return 
   run: async () => ({ meta: { changes: Number(sql.prepare(q).run(...s.args).changes) } }),
   all: async () => ({ results: sql.prepare(q).all(...s.args) }) }; return s; },
   batch: async (list) => Promise.all(list.map((s) => s.run())) };
-let calls = [];
+let calls = [], getMeDown = false;
 globalThis.fetch = async (url, opts = {}) => {
   const method = String(url).split("/").pop();
   if (String(url).includes("api.telegram.org")) {
     calls.push({ method, body: opts.body && typeof opts.body === "string" ? JSON.parse(opts.body) : {} });
+    if (method === "getMe" && getMeDown) return new Response("Bad Gateway", { status: 502 });
     return Response.json({ ok: true, result: method === "getMe" ? { username: "tr4inw4tcher_bot" } : true });
   }
   if (String(url).includes("/runs?")) return Response.json({ total_count: 0 });
@@ -37,7 +38,7 @@ const env = { DB: D1, TG_SECRET: "s", TELEGRAM_TOKEN: "123:FAKE", OWNER_CHAT_ID:
 const steps = JSON.parse(readFileSync(process.argv[4], "utf8")), out = [];
 let code = null;
 for (const st of steps) {
-  calls = []; const pending = [];
+  calls = []; const pending = []; getMeDown = !!st.getMeDown;
   const ctx = { waitUntil: (p) => pending.push(p) };
   let req;
   if (st.form) req = new Request("https://w.dev/form", { method: "POST", body: JSON.stringify({ initData: st.form, mode: "search", data: { v: 1 } }) });
@@ -56,6 +57,7 @@ for (const st of steps) {
   if (m) code = m[1];
   out.push({ status: res.status, reply, calls: calls.filter((c) => c.method !== "answerCallbackQuery"),
              users: sql.prepare("SELECT id, status FROM users ORDER BY id").all().map((r) => [r.id, r.status]),
+             invite: (sql.prepare("SELECT v FROM meta WHERE k = 'invite_code'").get() || {}).v,
              queue: sql.prepare("SELECT kind, payload FROM queue").all().map((r) => [r.kind, JSON.parse(r.payload)]) });
 }
 console.log(JSON.stringify(out));
@@ -72,7 +74,7 @@ class Invites(unittest.TestCase):
             r = subprocess.run(["node", "h.mjs", str(ROOT / "worker" / "schema.sql"), Path(d, "w.mjs").as_uri(), "steps.json"],
                                cwd=d, capture_output=True, text=True, encoding="utf-8")
             self.assertEqual(r.returncode, 0, r.stderr[-2000:])
-            return json.loads(r.stdout)
+            return json.loads(r.stdout.strip().splitlines()[-1])  # the Worker may log errors on lines before it
 
     def test_flow(self):
         friend = init_data()  # user 42
@@ -141,6 +143,21 @@ class Invites(unittest.TestCase):
         cmds = lambda o, chat: [[c["command"] for c in x["body"]["commands"]] for x in o["calls"] if x["method"] == "setMyCommands" and x["body"]["scope"]["chat_id"] == chat]
         self.assertEqual(cmds(out[6], 42), [["list", "past", "language", "help"]])         # a friend's menu, no Owner commands
         self.assertEqual(cmds(out[33], 1), [["list", "past", "language", "help", "invite", "friends"]])
+
+
+class InviteWhileTelegramIsDown(Invites):
+    def test_flow(self):
+        pass
+
+    def test_reset_changes_nothing_if_the_link_cannot_be_shown(self):
+        out = self.run_steps([{"from": 1, "text": "/invite reset", "getMeDown": True},   # Telegram down, name not known yet
+                              {"from": 1, "text": "/invite"},
+                              {"from": 1, "text": "/invite reset", "getMeDown": True}])  # the name is remembered now
+        self.assertIsNone(out[0].get("invite"))                               # nothing created...
+        self.assertIn("try again", out[0]["reply"]["text"])                   # ...and the Owner is told, not left in silence
+        self.assertIn(out[1]["invite"], out[1]["reply"]["text"])
+        self.assertNotEqual(out[2]["invite"], out[1]["invite"])               # a reset works without asking Telegram again
+        self.assertIn(out[2]["invite"], out[2]["reply"]["text"])              # and always shows the link it made
 
 
 if __name__ == "__main__":

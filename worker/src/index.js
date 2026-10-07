@@ -15,7 +15,7 @@ const FALLBACK = { ack: "⏳ Got it — checking prices, results in about a minu
   removed_owner: "🚫 {name} removed; their watches are stopped.", allowed_friend: "✅ You're in!", removed_friend: "Your access to TrainWatcher has ended.",
   invite_text: "🔗 Invite link:\n{link}", invite_reset: "🔄 New invite link (the old one no longer works):\n{link}", friends_t: "👥 Friends",
   friends_empty: "No friends yet: share the link from /invite.", st_pending: "waiting", st_allowed: "allowed", st_denied: "declined",
-  st_removed: "removed", help_owner: "/invite · /friends", rate_limited: "⏳ Too many requests in the last hour: try again later." };
+  st_removed: "removed", help_owner: "/invite · /friends", try_again: "⚠️ Telegram didn't answer: try again in a moment.", rate_limited: "⏳ Too many requests in the last hour: try again later." };
 
 export default {
   async fetch(req, env, ctx) {
@@ -170,14 +170,27 @@ async function decideFriend(env, ctx, origin, act, arg, chat, mid, S) {
   return Response.json({ method: "editMessageText", chat_id: chat, message_id: mid, parse_mode: "HTML", text: done.replace("{name}", `<b>${esc(row.name)}</b>`) });
 }
 
+// The bot's @username for the link: asked from Telegram once, then remembered.
+async function botUsername(env) {
+  let name = await metaGet(env, "bot_username");
+  if (!name) {
+    const r = await fetch(`https://api.telegram.org/bot${env.TELEGRAM_TOKEN}/getMe`).catch(() => null);
+    const j = r && r.ok ? await r.json().catch(() => null) : null;
+    name = j && j.ok && j.result && j.result.username;
+    if (name) await metaPut(env, "bot_username", name);
+  }
+  return name;
+}
+
 async function invite(env, chat, S, reset) {
+  const name = await botUsername(env);
+  if (!name) return send(chat, S.try_again);  // first, so a reset never kills the old link without showing a new one
   let code = await metaGet(env, "invite_code");
   if (!code || reset) {
     code = btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(12)))).replace(/\+/g, "-").replace(/\//g, "_");
     await metaPut(env, "invite_code", code);
   }
-  const me = await (await fetch(`https://api.telegram.org/bot${env.TELEGRAM_TOKEN}/getMe`)).json();
-  return send(chat, (reset ? S.invite_reset : S.invite_text).replace("{link}", `https://t.me/${me.result.username}?start=${code}`));
+  return send(chat, (reset ? S.invite_reset : S.invite_text).replace("{link}", `https://t.me/${name}?start=${code}`));
 }
 
 async function friends(env, chat, S) {
