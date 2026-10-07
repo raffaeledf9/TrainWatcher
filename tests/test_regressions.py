@@ -157,6 +157,13 @@ class SecondPass(unittest.TestCase):
         self.assertIn("osc=MI0&dsc=RMT", urls["🎫 06:15 IT 9967"])
         self.assertIn("osc=RMT&dsc=MI0", urls["🎫 18:00 IT 9990"])
 
+    def test_a_month_part_with_only_the_return_books_the_return(self):
+        w = watch(out={"d": ["2026-11-20", "2026-11-30"], "w": None}, ret={"d": ["2026-11-25", "2027-01-10"], "w": None}, ops=["I"])
+        back = Offer(ITALO, "9990", "IT", "2026-12-05T18:00", "2026-12-05T21:10", "RMT", "MC_", "Smart", "Economy", 19.9)
+        _, kb = render.status(w, [None, {"low": 19.9, "ties": [back], "others": []}], NOW, "en", date(2026, 10, 6), part=(2, 3, "2026-12"))
+        self.assertIn("osc=RMT&dsc=MI0", kb[0][0]["url"])
+        self.assertIn("od=05%2F12%2F2026", kb[0][0]["url"])
+
     def test_first_time_on_sale_is_not_back(self):
         w = watch()
         _, s = alerts.evaluate(w, {}, None, True, date(2026, 10, 6))          # created before sales opened

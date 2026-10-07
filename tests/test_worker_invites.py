@@ -98,6 +98,7 @@ class Invites(unittest.TestCase):
             {"from": 1, "cb": "fa:43"},                            # 30 the Owner allows Luca...
             {"from": 1, "cb": "fa:43"},                            # 31 ...taps the old Allow again: nothing new
             {"from": 1, "cb": "fd:43"},                            # 32 ...and Deny on the old request: that removes him
+            {"from": 1, "text": "/start"},                         # 33 the Owner's "/" menu includes /invite and /friends
         ]
         first = self.run_steps(steps[:2])
         steps[26]["oldCode"] = first[1]["reply"]["text"].split("start=")[1].split()[0]
@@ -137,6 +138,9 @@ class Invites(unittest.TestCase):
         self.assertFalse([c for c in out[31]["calls"] if c["body"].get("chat_id") == 43])  # no second welcome
         self.assertIn([43, "removed"], out[32]["users"])
         self.assertIn(["revoke", {"user_id": 43}], out[32]["queue"])                       # his watches stop too
+        cmds = lambda o, chat: [[c["command"] for c in x["body"]["commands"]] for x in o["calls"] if x["method"] == "setMyCommands" and x["body"]["scope"]["chat_id"] == chat]
+        self.assertEqual(cmds(out[6], 42), [["list", "past", "language", "help"]])         # a friend's menu, no Owner commands
+        self.assertEqual(cmds(out[33], 1), [["list", "past", "language", "help", "invite", "friends"]])
 
 
 if __name__ == "__main__":

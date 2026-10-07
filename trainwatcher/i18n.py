@@ -51,10 +51,10 @@ S = {
         no_answer="⚠️ {ops} didn't answer this time: the list may be incomplete.", no_chart="📈 No price history yet.",
         recovered="✅ Price checks are working again.", op_ok="✅ Price checks for {ops} are working again.",
         job_dead="⚠️ Price checks have stopped finishing (the GitHub job is failing or not starting). I'll tell you when they're back.",
-        worker_dead="⚠️ The Cloudflare Worker isn't starting price checks (Worker down or GitHub token expired). Checks go on hourly; buttons and commands may not answer.",
-        dispatch_fail="⚠️ GitHub refused to start a price check: the GitHub token has probably expired. Checks go on hourly; ask Claude to install a new token.",
+        worker_dead="⚠️ The Cloudflare Worker isn't starting price checks (Worker down or GitHub token expired). Checks go on only every few hours; buttons and commands may not answer.",
+        dispatch_fail="⚠️ GitHub refused to start a price check: the GitHub token has probably expired. Checks go on only every few hours; ask Claude to install a new token.",
         weekly="🩺 Weekly check: {w} active watches, {c} checks, {f} failed runs this week.",
-        token="🔑 The GitHub token expires on {d}. Make a new one ({url}) and ask Claude to install it, otherwise checks slow down to once an hour.",
+        token="🔑 The GitHub token expires on {d}. Make a new one ({url}) and ask Claude to install it, otherwise checks slow down to every few hours.",
     ),
     IT: dict(
         book_i="🎫 Prenota su Italo", book_t="🎫 Prenota su Trenitalia", hist="📈 Storico", now="🔄 Aggiorna", dele="🗑 Elimina",
@@ -100,10 +100,10 @@ S = {
         no_answer="⚠️ {ops} non ha risposto questa volta: l'elenco potrebbe essere incompleto.", no_chart="📈 Ancora nessuno storico dei prezzi.",
         recovered="✅ I controlli dei prezzi funzionano di nuovo.", op_ok="✅ I controlli dei prezzi per {ops} funzionano di nuovo.",
         job_dead="⚠️ I controlli dei prezzi non arrivano più alla fine (il job GitHub fallisce o non parte). Ti avviso quando riprendono.",
-        worker_dead="⚠️ Il Worker Cloudflare non avvia i controlli dei prezzi (Worker fermo o token GitHub scaduto). I controlli continuano ogni ora; pulsanti e comandi potrebbero non rispondere.",
-        dispatch_fail="⚠️ GitHub ha rifiutato di avviare un controllo: probabilmente il token GitHub è scaduto. I controlli continuano ogni ora; fai installare a Claude un nuovo token.",
+        worker_dead="⚠️ Il Worker Cloudflare non avvia i controlli dei prezzi (Worker fermo o token GitHub scaduto). I controlli continuano solo ogni qualche ora; pulsanti e comandi potrebbero non rispondere.",
+        dispatch_fail="⚠️ GitHub ha rifiutato di avviare un controllo: probabilmente il token GitHub è scaduto. I controlli continuano solo ogni qualche ora; fai installare a Claude un nuovo token.",
         weekly="🩺 Controllo settimanale: {w} monitoraggi attivi, {c} controlli, {f} esecuzioni fallite questa settimana.",
-        token="🔑 Il token GitHub scade il {d}. Creane uno nuovo ({url}) e fallo installare a Claude, altrimenti i controlli rallentano a uno all'ora.",
+        token="🔑 Il token GitHub scade il {d}. Creane uno nuovo ({url}) e fallo installare a Claude, altrimenti i controlli rallentano a uno ogni qualche ora.",
     ),
 }
 
