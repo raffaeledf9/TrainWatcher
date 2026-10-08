@@ -135,7 +135,7 @@ async function joinRequest(env, msg, status) {
   if (!r.meta.changes) return send(msg.chat.id, S.req_wait);  // a double tap: notify the Owner only once
   const O = await strings(env, (await snap(env, `${env.OWNER_CHAT_ID}:lang`)) || "en");
   const who = `<b>${esc(fullName(f))}</b>` + (f.username ? ` · @${esc(f.username)}` : "") + ` · id <code>${f.id}</code>` + (f.language_code ? ` · ${esc(f.language_code)}` : "");
-  await tg(env, "sendMessage", { chat_id: env.OWNER_CHAT_ID, parse_mode: "HTML", text: O.req_new.replace("{who}", who),
+  await tg(env, "sendMessage", { chat_id: env.OWNER_CHAT_ID, parse_mode: "HTML", text: O.req_new.replace("{who}", () => who),
     reply_markup: { inline_keyboard: [[{ text: O.btn_allow, callback_data: `fa:${f.id}` }, { text: O.btn_deny, callback_data: `fd:${f.id}` }]] } });
   return send(msg.chat.id, S.req_sent);
 }
@@ -167,7 +167,7 @@ async function decideFriend(env, ctx, origin, act, arg, chat, mid, S) {
     await tg(env, "setChatMenuButton", { chat_id: row.id, menu_button: { type: "default" } });
   }
   const done = { allowed: S.allowed_owner, denied: S.denied_owner, removed: S.removed_owner }[status];
-  return Response.json({ method: "editMessageText", chat_id: chat, message_id: mid, parse_mode: "HTML", text: done.replace("{name}", `<b>${esc(row.name)}</b>`) });
+  return Response.json({ method: "editMessageText", chat_id: chat, message_id: mid, parse_mode: "HTML", text: done.replace("{name}", () => `<b>${esc(row.name)}</b>`) });
 }
 
 // The bot's @username for the link: asked from Telegram once, then remembered.
@@ -197,9 +197,9 @@ async function friends(env, chat, S) {
   const { results } = await env.DB.prepare("SELECT id, status, name, username FROM users ORDER BY requested_at DESC LIMIT 30").all();
   if (!results.length) return send(chat, S.friends_empty);
   const text = S.friends_t + "\n\n" + results.map((r) => `• ${esc(r.name)}${r.username ? " (@" + esc(r.username) + ")" : ""} — ${S["st_" + r.status]}`).join("\n");
-  const kb = results.map((r) => r.status === "allowed" ? [{ text: S.btn_remove.replace("{name}", r.name), callback_data: `fr:${r.id}` }]
+  const kb = results.map((r) => r.status === "allowed" ? [{ text: S.btn_remove.replace("{name}", () => r.name), callback_data: `fr:${r.id}` }]
     : r.status === "pending" ? [{ text: `${S.btn_allow} ${r.name}`, callback_data: `fa:${r.id}` }, { text: S.btn_deny, callback_data: `fd:${r.id}` }]
-    : [{ text: S.btn_readd.replace("{name}", r.name), callback_data: `fa:${r.id}` }]);
+    : [{ text: S.btn_readd.replace("{name}", () => r.name), callback_data: `fa:${r.id}` }]);
   return send(chat, text, kb);
 }
 

@@ -145,6 +145,21 @@ class Invites(unittest.TestCase):
         self.assertEqual(cmds(out[33], 1), [["list", "past", "language", "help", "invite", "friends"]])
 
 
+class NamesAreShownAsTyped(Invites):
+    def test_flow(self):
+        pass
+
+    def test_dollar_patterns_in_a_name(self):  # String.replace expands $$ $& $` $' in a replacement string
+        name = "Cash$$ $& $` $'"
+        out = self.run_steps([{"from": 1, "text": "/invite"}, {"from": 44, "name": name, "text": "/start {code}"},
+                              {"from": 1, "cb": "fa:44"}, {"from": 1, "text": "/friends"}])
+        notice = [c for c in out[1]["calls"] if c["body"].get("chat_id") == "1"][0]["body"]["text"]
+        html = name.replace("&", "&amp;")
+        self.assertIn(f"<b>{html} Rossi</b>", notice)
+        self.assertIn(f"<b>{html} Rossi</b> can now use the bot", out[2]["reply"]["text"])
+        self.assertEqual(out[3]["reply"]["reply_markup"]["inline_keyboard"][0][0]["text"], f"🚫 Remove {name} Rossi")
+
+
 class InviteWhileTelegramIsDown(Invites):
     def test_flow(self):
         pass
