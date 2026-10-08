@@ -282,7 +282,8 @@ def _round_trip_alert(watch, e, views, lang, today):
         label = t(lang, ("out_ch" if i == 0 else "ret_ch") if changed else ("out" if i == 0 else "ret"))
         old = f" <s>{price(prev[k], lang)}</s>" if changed else ""
         same = "" if changed else f" ({t(lang, 'unchanged')})"
-        lines.append(f"{'→' if i == 0 else '←'} {label}: <b>{price(o.price, lang)}</b>{old} — {OPS.get(o.category, o.category)} {o.train} {times(o, watch.legs[i])}{same}")
+        d = (day(date.fromisoformat(o.dep[:10]), lang) + " ") if len(watch.legs[i].dates()) > 1 else ""
+        lines.append(f"{'→' if i == 0 else '←'} {label}: <b>{price(o.price, lang)}</b>{old} — {OPS.get(o.category, o.category)} {o.train} {d}{times(o, watch.legs[i])}{same}")
     lines.append("")
     if "max" in e:
         m = price(e["max"], lang)

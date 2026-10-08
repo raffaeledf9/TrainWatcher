@@ -312,6 +312,24 @@ class UnsavedRun(FullRuns):
         self.assertEqual((n, self.w.queue), (1, []))
 
 
+class StaleSearch(FullRuns):
+    def test_days_of_use(self):
+        pass
+
+    def test_watch_this_on_a_search_whose_days_are_gone(self):
+        self.w.enqueue(1, "form", form("search", out={"d": ["2026-10-08"], "w": None}))
+        self.run_at(datetime(2026, 10, 7, 8, 0))
+        sid = next(b["callback_data"] for m in self.w.sent for row in m.get("reply_markup", {}).get("inline_keyboard", [])
+                   for b in row if b.get("callback_data", "").startswith("wt:"))
+        self.w.enqueue(1, "callback", {"data": sid})                 # tapped two days later
+        texts = self.run_at(datetime(2026, 10, 10, 8, 0))
+        db = store.connect(os.environ["STATE_DB"])
+        n = len(store.watches(db, 1))
+        db.close()
+        self.assertEqual((n, [t for t in texts if "✅" in t]), (0, []))
+        self.assertTrue(any("past" in t for t in texts), texts)     # told why nothing was created
+
+
 class PoisonCommand(FullRuns):
     def test_days_of_use(self):
         pass

@@ -132,9 +132,11 @@ def handle(db, item, now, local, forced, searches):
             store.set_status(db, int(arg), "past")
         elif act == "wt":
             spec = store.meta_get(db, f"search:{arg}")
-            if spec and json.loads(spec)["user_id"] == uid and not over_cap(db, uid, lang, local):
+            w = spec and model.Watch.from_json(json.loads(spec))
+            if w and w.user_id == uid and schedule.is_past(w, local.date()):  # tapped after the search's days are gone
+                send(uid, (i18n.t(lang, "invalid", why=i18n.reason(lang, "dates are in the past")), []), local, silent=False)
+            elif w and w.user_id == uid and not over_cap(db, uid, lang, local):
                 db.execute("DELETE FROM meta WHERE k = ?", (f"search:{arg}",))  # a second tap creates nothing
-                w = model.Watch.from_json(json.loads(spec))
                 w.id = store.add_watch(db, w, now)
                 forced.add(w.id)
                 send(uid, (i18n.t(lang, "created", w=render.route(w, lang, short=True) + " · " + render.watch_days(w, lang)), []), local, silent=False)
