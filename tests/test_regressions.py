@@ -157,6 +157,15 @@ class SecondPass(unittest.TestCase):
         self.assertIn("osc=MI0&dsc=RMT", urls["🎫 06:15 IT 9967"])
         self.assertIn("osc=RMT&dsc=MI0", urls["🎫 18:00 IT 9990"])
 
+    def test_a_round_trip_alert_names_the_day_of_multi_day_legs(self):  # as one-way alerts do
+        w = watch(out={"d": ["2026-11-10", "2026-11-12"], "w": None}, ret={"d": ["2026-11-15"], "w": None}, ops=["I"])
+        out = Offer(ITALO, "9967", "IT", "2026-11-11T06:15", "2026-11-11T09:24", "MC_", "RMT", "Smart", "Economy", 29.9)
+        back = Offer(ITALO, "9990", "IT", "2026-11-15T18:00", "2026-11-15T21:10", "RMT", "MC_", "Smart", "Economy", 19.9)
+        e = {"kind": "drop", "low": 49.8, "prev": 59.8, "legs": {"out": 29.9, "ret": 19.9}, "prev_legs": {"out": 39.9, "ret": 19.9}}
+        text, _ = render.alert(w, [e], [{"ties": [out], "pair": out}, {"ties": [back], "pair": back}], NOW, "en", date(2026, 10, 6))
+        self.assertIn("Italo 9967 Wed 11 Nov 06:15", text)
+        self.assertIn("Italo 9990 18:00", text)                     # a one-day leg needs no day
+
     def test_a_month_part_with_only_the_return_books_the_return(self):
         w = watch(out={"d": ["2026-11-20", "2026-11-30"], "w": None}, ret={"d": ["2026-11-25", "2027-01-10"], "w": None}, ops=["I"])
         back = Offer(ITALO, "9990", "IT", "2026-12-05T18:00", "2026-12-05T21:10", "RMT", "MC_", "Smart", "Economy", 19.9)
