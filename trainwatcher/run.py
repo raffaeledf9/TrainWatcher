@@ -10,6 +10,7 @@ import os
 import sys
 import time
 import urllib.request
+from collections import Counter
 from datetime import date, datetime, timedelta, timezone
 
 from trainwatcher import alerts, check, i18n, model, render, schedule, stations, store
@@ -217,7 +218,7 @@ def check_and_alert(db, now, local, forced, searches):
             print("search failed", type(e).__name__)
     db.commit()
     bad = sum(1 for s in statuses.values() if s not in ("OK", "EMPTY", "NA"))
-    return len(take), len(deferred), len(units), bad, sent, fetch_s, failing
+    return Counter(w.user_id for w in take), len(deferred), len(units), bad, sent, fetch_s, failing
 
 
 def check_one(db, w, now, local, forced, statuses):
@@ -311,8 +312,8 @@ def next_due(db):
 
 def health(db, now, local, failing, checked, worker_ok, event, overdue=False):
     """Owner notices besides op_health: a dead Worker (the job's dead-man switch; the Worker watches the job), the
-    silent Monday self-check, the GitHub token's expiry. overdue: a watch was due over 30 min before this run.
-    Returns notices sent."""
+    GitHub token's expiry; and the silent Monday self-check, one per chat with active watches. checked: {user: watches
+    checked this run}. overdue: a watch was due over 30 min before this run. Returns notices sent."""
     owner = int(os.environ["OWNER_CHAT_ID"])
     lang, notices = lang_of(db, owner), []
     get, put = (lambda k, d="0": store.meta_get(db, k, d)), (lambda k, v: store.meta_set(db, k, v))
@@ -335,15 +336,18 @@ def health(db, now, local, failing, checked, worker_ok, event, overdue=False):
     elif load < 0.6:
         put("load_warned", "")
 
-    put("week_checks", int(get("week_checks")) + checked)
+    for uid, n in checked.items():
+        put(f"week_checks:{uid}", int(get(f"week_checks:{uid}")) + n)
     put("week_fails", int(get("week_fails")) + bool(failing))
     week = local.strftime("%G-W%V")
     if local.weekday() == 0 and local.hour >= 9 and get("weekly_sent", "") != week:
-        active, fails = len(store.watches(db)), int(get("week_fails"))
-        if active or fails:  # no watches and nothing broke: nothing worth a message
-            send(owner, (i18n.t(lang, "weekly", w=active, c=get("week_checks"), f=fails), []), local, silent=True)
+        # each chat hears about its own watches, and only if it has some; failed runs are the Owner's business
+        # (failures also have their own notices, so a chat without watches needs no report)
+        for uid, n in sorted(Counter(w.user_id for w in store.watches(db)).items()):
+            key, c = ("weekly", "weekly_friend")[uid != owner], get(f"week_checks:{uid}")
+            send(uid, (i18n.t(lang_of(db, uid), key, w=n, c=c, f=get("week_fails")), []), local, silent=True)
         put("weekly_sent", week)
-        put("week_checks", 0)
+        db.execute("DELETE FROM meta WHERE k LIKE 'week_checks%'")
         put("week_fails", 0)
 
     if local.date() >= GH_TOKEN_EXPIRES - timedelta(days=14) and get("token_reminded", "") != GH_TOKEN_EXPIRES.isoformat():
@@ -409,7 +413,7 @@ def main():
     notices = health(db, now, local, failing, checked, worker_ok, os.environ.get("GITHUB_EVENT_NAME", ""), overdue)
     store.prune(db, local.date())
     snaps = snapshots(db, now, local) if worker_ok else 0  # the workflow tells the Worker "done" once state is saved
-    print(f"run #{runs}: commands={commands} watches_checked={checked} deferred={deferred} units={units} failed_units={bad} "
+    print(f"run #{runs}: commands={commands} watches_checked={sum(checked.values())} deferred={deferred} units={units} failed_units={bad} "
           f"failing_ops={len(failing)} worker_ok={worker_ok} messages={sent} notices={notices} snapshots={snaps} "
           f"fetch={fetch_s:.1f}s total={time.time() - t0:.1f}s")
     if run_number:
