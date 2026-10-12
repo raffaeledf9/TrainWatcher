@@ -43,13 +43,18 @@ class Notices(unittest.TestCase):
     def setUp(self):
         self.db, self.sent = store.connect(":memory:"), []
         patches = [mock.patch.dict(os.environ, {"OWNER_CHAT_ID": "7"}),
-                   mock.patch.object(run, "send", lambda uid, tk, local, silent=None: self.sent.append((tk[0], silent)))]
+                   mock.patch.object(run, "send", lambda uid, tk, local, silent=None: self.sent.append((tk[0], silent, uid)))]
         for p in patches:
             p.start()
             self.addCleanup(p.stop)
 
     def texts(self):
-        return [t for t, _ in self.sent]
+        return [t for t, *_ in self.sent]
+
+    def add(self, uid):
+        w = model.from_payload({"v": 1, "from": "milano-tutte", "to": "roma-termini", "out": {"d": ["2026-11-10"], "w": None}},
+                               uid, {"milano-tutte", "roma-termini"}, date(2026, 10, 6))
+        return store.add_watch(self.db, w, NOW)
 
     def test_three_failing_runs_then_recovery(self):
         for _ in range(4):
@@ -65,7 +70,7 @@ class Notices(unittest.TestCase):
         self.assertEqual(run.stale_since(self.db, w), run.to_local(NOW))
 
     def test_dead_worker_once_then_recovered(self):
-        h = lambda event, ok=True, overdue=False: run.health(self.db, NOW, NOW, set(), 0, ok, event, overdue)
+        h = lambda event, ok=True, overdue=False: run.health(self.db, NOW, NOW, set(), {}, ok, event, overdue)
         h("schedule")                     # idle bot: hourly fallback runs, nothing due, all fine
         h("schedule", ok=False)           # Worker unreachable
         h("schedule", ok=False)
@@ -85,16 +90,31 @@ class Notices(unittest.TestCase):
 
     def test_monday_self_check_is_silent_and_weekly(self):
         monday = datetime(2026, 10, 12, 9, 5)
-        run.health(self.db, NOW, datetime(2026, 10, 11, 20, 0), {"T"}, 4, True, "")
-        run.health(self.db, NOW, monday, set(), 2, True, "")
-        run.health(self.db, NOW, monday + timedelta(minutes=5), set(), 2, True, "")
+        self.add(7)
+        run.health(self.db, NOW, datetime(2026, 10, 11, 20, 0), {"T"}, {7: 4}, True, "")
+        run.health(self.db, NOW, monday, set(), {7: 2}, True, "")
+        run.health(self.db, NOW, monday + timedelta(minutes=5), set(), {7: 2}, True, "")
         self.assertEqual(len(self.sent), 1)
         self.assertEqual(self.sent[0][1], True)
         self.assertIn("checks: 6 · failed runs this week: 1", self.sent[0][0])
 
-    def test_no_watches_and_no_failures_no_monday_message(self):
+    def test_each_chat_gets_its_own_weekly_report(self):
+        self.add(7), self.add(7), self.add(8)                          # the Owner's two, a friend's one...
+        store.set_status(self.db, self.add(9), "past")                 # ...and a friend whose watch has ended
         monday = datetime(2026, 10, 12, 9, 5)
-        run.health(self.db, NOW, monday, set(), 0, True, "")
+        run.health(self.db, NOW, datetime(2026, 10, 11, 20, 0), {"T"}, {7: 3, 8: 2}, True, "")
+        run.health(self.db, NOW, monday, set(), {7: 1, 8: 1}, True, "")
+        got = {uid: text for text, _, uid in self.sent}
+        self.assertEqual(sorted(got), [7, 8])
+        self.assertIn("active watches: 2 · checks: 4 · failed runs this week: 1", got[7])
+        self.assertIn("active watches: 1 · checks: 3", got[8])
+        self.assertNotIn("failed", got[8])                             # maintenance news is the Owner's only
+        self.assertTrue(all(silent for _, silent, _ in self.sent))
+
+    def test_no_active_watches_no_monday_message(self):  # failed runs or not: those have their own notices
+        monday = datetime(2026, 10, 12, 9, 5)
+        store.set_status(self.db, self.add(7), "past")
+        run.health(self.db, NOW, monday, {"T"}, {}, True, "")
         self.assertEqual(self.sent, [])
         self.assertEqual(store.meta_get(self.db, "weekly_sent"), "2026-W42")  # still done for this week
 
@@ -105,14 +125,15 @@ class Notices(unittest.TestCase):
         store.meta_set(self.db, "last_ok_run", 101)         # ...and it finished (main() records that at the end)
         run.count_unfinished(self.db, 104)                  # runs 102 and 103 crashed or couldn't save
         self.assertEqual(store.meta_get(self.db, "week_fails"), "2")
-        run.health(self.db, NOW, datetime(2026, 10, 12, 9, 5), set(), 0, True, "")  # no watches, but failures: tell
+        self.add(7)
+        run.health(self.db, NOW, datetime(2026, 10, 12, 9, 5), set(), {}, True, "")
         self.assertIn("failed runs this week: 2", self.sent[0][0])
 
     def test_token_reminder_14_days_before_once(self):
         day = datetime.combine(run.GH_TOKEN_EXPIRES - timedelta(days=15), datetime.min.time()).replace(hour=12)
         tokens = []
         for d in (0, 1, 2):
-            run.health(self.db, NOW, day + timedelta(days=d), set(), 0, True, "")
+            run.health(self.db, NOW, day + timedelta(days=d), set(), {}, True, "")
             tokens.append(sum("token" in t for t in self.texts()))
         self.assertEqual(tokens, [0, 1, 1])
 

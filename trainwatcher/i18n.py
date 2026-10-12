@@ -54,6 +54,7 @@ S = {
         worker_dead="⚠️ The Cloudflare Worker isn't starting price checks (Worker down or GitHub token expired). Checks go on only every few hours; buttons and commands may not answer.",
         dispatch_fail="⚠️ GitHub refused to start a price check: the GitHub token has probably expired. Checks go on only every few hours; ask Claude to install a new token.",
         weekly="🩺 Weekly check — active watches: {w} · checks: {c} · failed runs this week: {f}",
+        weekly_friend="🩺 Weekly check — active watches: {w} · checks: {c}",
         token="🔑 The GitHub token expires on {d}. Make a new one ({url}) and ask Claude to install it, otherwise checks slow down to every few hours.",
     ),
     IT: dict(
@@ -103,6 +104,7 @@ S = {
         worker_dead="⚠️ Il Worker Cloudflare non avvia i controlli dei prezzi (Worker fermo o token GitHub scaduto). I controlli continuano solo ogni qualche ora; pulsanti e comandi potrebbero non rispondere.",
         dispatch_fail="⚠️ GitHub ha rifiutato di avviare un controllo: probabilmente il token GitHub è scaduto. I controlli continuano solo ogni qualche ora; fai installare a Claude un nuovo token.",
         weekly="🩺 Controllo settimanale — monitoraggi attivi: {w} · controlli: {c} · esecuzioni fallite questa settimana: {f}",
+        weekly_friend="🩺 Controllo settimanale — monitoraggi attivi: {w} · controlli: {c}",
         token="🔑 Il token GitHub scade il {d}. Creane uno nuovo ({url}) e fallo installare a Claude, altrimenti i controlli rallentano a uno ogni qualche ora.",
     ),
 }
