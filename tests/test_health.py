@@ -1,12 +1,13 @@
 """Running unattended (map ticket 13): the canary tells 'no trains' from 'operator broken', the Owner hears about
 3 failing runs and the recovery, a dead Worker, the Monday self-check and the token expiry."""
+import json
 import os
 import unittest
 from datetime import date, datetime, timedelta, timezone
 from unittest import mock
 
 from trainwatcher import check, model, run, store
-from trainwatcher.offers import BROKEN, EMPTY, OK, Offer, SearchResult
+from trainwatcher.offers import BLOCKED, BROKEN, EMPTY, OK, Offer, SearchResult
 from trainwatcher.operators import trenitalia
 
 NOW = datetime(2026, 10, 6, 12, 0)
@@ -37,6 +38,13 @@ class Canary(unittest.TestCase):
             statuses, failing = check.fetch_and_record(db, [UNIT], NOW, session=object())
         self.assertEqual((statuses[UNIT], failing), (BROKEN, {"T"}))
         self.assertEqual(len(store.current_offers(db, UNIT)), 1)  # the last good prices stay
+        self.assertEqual(json.loads(store.meta_get(db, "fail_detail:T"))["status"], BROKEN)  # what the canary got
+
+    def test_a_failing_operator_records_what_went_wrong(self):
+        db = store.connect(":memory:")
+        with mock.patch.object(trenitalia, "search", lambda *a, **kw: SearchResult(BLOCKED, detail="http 403")):
+            check.fetch_and_record(db, [UNIT, UNIT[:3] + (date(2026, 11, 11),) + UNIT[4:]], NOW, session=object())
+        self.assertEqual(json.loads(store.meta_get(db, "fail_detail:T")), {"status": BLOCKED, "detail": "http 403", "bad": 2, "of": 2})
 
 
 class Notices(unittest.TestCase):
@@ -68,6 +76,22 @@ class Notices(unittest.TestCase):
         self.assertIn("working again", self.texts()[-1])
         run.op_health(self.db, NOW + timedelta(minutes=5), NOW, {"T"}, {"T"})
         self.assertEqual(run.stale_since(self.db, w), run.to_local(NOW))
+
+    def test_the_failure_notice_says_whose_side_it_is_and_what_failed(self):
+        cases = {(BLOCKED, "http 403"): "Trenitalia is refusing requests from GitHub's servers (http 403)",
+                 (BROKEN, "http 503"): "Trenitalia's servers are failing (http 503)",
+                 (BROKEN, "network: TimeoutError"): "Trenitalia can't be reached from GitHub's servers",
+                 (BROKEN, "schema: KeyError"): "The bot needs an update",
+                 (BROKEN, "http 404"): "The bot needs an update",
+                 (EMPTY, ""): "no trains even on the Milano → Roma test route",
+                 (BROKEN, "ValueError"): "a bug in the bot's Trenitalia connector (ValueError)"}
+        for (status, detail), words in cases.items():
+            self.sent.clear()
+            store.meta_set(self.db, "fail_runs:T", 2)
+            store.meta_set(self.db, "fail_detail:T", json.dumps({"status": status, "detail": detail, "bad": 2, "of": 3}))
+            run.op_health(self.db, NOW, NOW, {"T"}, {"T"})
+            self.assertIn(words, self.texts()[0])
+            self.assertIn("2 of 3 searches failed", self.texts()[0])
 
     def test_dead_worker_once_then_recovered(self):
         h = lambda event, ok=True, overdue=False: run.health(self.db, NOW, NOW, set(), {}, ok, event, overdue)

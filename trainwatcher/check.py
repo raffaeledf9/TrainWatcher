@@ -1,6 +1,7 @@
 """One Check: fetch the search units of the due Watches (shared, in parallel), record what came back, and build
 each Watch's view (Lowest price, Ties, top 5, round-trip total) from the stored current offers."""
 import dataclasses
+import json
 from datetime import timedelta
 
 from trainwatcher import prices, render, stations, store
@@ -50,16 +51,17 @@ def _call(u, session, ids):
 
 
 def canary(op, session, today):
-    """Decides 'really no trains' vs 'operator broken': a weekday about 5 weeks ahead on a route that always has trains."""
+    """Decides 'really no trains' vs 'operator broken': a weekday about 5 weeks ahead on a route that always has trains.
+    -> None if it answers with trains, else (status, detail) of what it got."""
     day = today + timedelta(days=35)
     while day.weekday() >= 5:
         day += timedelta(days=1)
     a, b = (stations.operator_ids(stations.by_key(k))[NAME[op]] for k in CANARY)
     try:
         r = trenitalia.search(a, b, day) if op == "T" else session.search(a, b, day)
-    except Exception:
-        return False
-    return r.status == OK and bool(r.offers)
+    except Exception as e:
+        return BROKEN, type(e).__name__
+    return None if r.status == OK and r.offers else (r.status, r.detail or "")
 
 
 def fetch_and_record(db, units, now, session=None):
@@ -87,8 +89,14 @@ def fetch_and_record(db, units, now, session=None):
             return call
 
         results, _ = http.run_parallel([wrap(u, ids) for u, ids in todo], CONCURRENCY[op])
-        if results and (any(r.status not in (OK, EMPTY) for r in results) or all(r.status == EMPTY for r in results))                 and not canary(op, session, now.date()):
+        bad = [r for r in results if r.status not in (OK, EMPTY)]
+        problem = results and (bad or all(r.status == EMPTY for r in results)) and canary(op, session, now.date())
+        if problem:
             failing.add(op)
+            # what went wrong, for the Owner's notice: the searches' own error, or the canary's when they all came back empty
+            status, detail = (bad[0].status, bad[0].detail or "") if bad else problem
+            store.meta_set(db, f"fail_detail:{op}", json.dumps({"status": status, "detail": detail, "bad": len(bad) or len(results), "of": len(results)}))
+            print("operator failing", op, status, detail)  # log-safe: no route, no user
         for (u, _), res in zip(todo, results):
             statuses[u] = BROKEN if op in failing and res.status == EMPTY else res.status
             if statuses[u] in (OK, EMPTY):
