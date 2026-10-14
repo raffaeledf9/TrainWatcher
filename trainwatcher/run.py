@@ -171,12 +171,26 @@ def op_health(db, now, local, failing, tried):
         n = before + 1 if op in failing else 0
         key = "fail" if n == 3 else "op_ok" if n == 0 and before >= 3 else None
         if key:
-            send(owner, (i18n.t(lang_of(db, owner), key, ops=OP_NAME[op]), []), local)
+            lang = lang_of(db, owner)
+            text = i18n.t(lang, key, ops=OP_NAME[op])
+            problem = store.meta_get(db, f"fail_detail:{op}") if key == "fail" else None
+            if problem:
+                p = json.loads(problem)
+                text += "\n\n" + cause(lang, op, p["status"], p["detail"]) + "\n" + i18n.t(lang, "fail_count", bad=p["bad"], of=p["of"])
+            send(owner, (text, []), local)
             sent += 1
         if n == 0:
             store.meta_set(db, f"last_ok_at:{op}", now.isoformat())
         store.meta_set(db, f"fail_runs:{op}", n)
     return sent
+
+
+def cause(lang, op, status, detail):
+    """Whose side a failing operator's problem is on, from what its searches got (see operators.http.classify)."""
+    key = ("cause_blocked" if status == "BLOCKED" else "cause_empty" if status == "EMPTY"
+           else "cause_down" if detail.startswith("http 5") else "cause_network" if detail.startswith("network")
+           else "cause_format" if detail.startswith(("schema", "not json", "http")) else "cause_bug")
+    return i18n.t(lang, key, op=OP_NAME[op], d=render.escape(detail))
 
 
 def unanswered(watch, statuses, today):
