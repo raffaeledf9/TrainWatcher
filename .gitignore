@@ -10,3 +10,4 @@ state.db*
 .dev.vars
 .claude/
 .cache/
+docs/superpowers/

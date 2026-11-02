@@ -146,7 +146,6 @@ GitHub token that can start workflows in your fork.
 | **[CONTEXT.md](CONTEXT.md)** | the words the code uses: watch, leg, fare watch, owner, friend |
 | **[docs/adr/](docs/adr/)** | why GitHub Actions, why a public repository, why a webhook |
 | **[docs/data-sources.md](docs/data-sources.md)** | where the station list comes from, and its licence |
-| **[docs/superpowers/](docs/superpowers/)** | the original design and build plan, as written before the first version |
 
 ## Repository layout
 
