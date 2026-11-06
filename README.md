@@ -196,6 +196,7 @@ One exception, not mine to license:
   [docs/data-sources.md](docs/data-sources.md).
 
 Fares are read from the public booking sites of Trenitalia and Italo at run time,
-and kept only in the encrypted state.
+and kept only in the encrypted state. They may be out of date or wrong: check them on the
+operator's site before buying.
 
 **TrainWatcher is a personal project, not affiliated with Trenitalia, Italo or the CCISS.**

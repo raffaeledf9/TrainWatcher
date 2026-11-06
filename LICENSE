@@ -19,19 +19,3 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-
----
-
-Not covered by the above, because they are not the copyright holder's to
-license:
-
-  webapp/stations.json         station data from Trenitalia S.p.A., published
-                               through the Italian National Access Point and
-                               converted to GTFS by deryclem/trenitalia-gtfs,
-                               CC BY 4.0; merged with the public station lists
-                               of trenitalia.com and Italo. Sources and changes
-                               in docs/data-sources.md.
-
-TrainWatcher reads the public booking sites of Trenitalia and Italo and is not
-affiliated with either. The fares it reports may be out of date or wrong:
-check them on the operator's site before buying.
