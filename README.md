@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="docs/images/logo.png" alt="TrainWatcher" width="160">
+
 # TrainWatcher
 
 **Watching Trenitalia and Italo fares day and night,<br>and telling you when it is time to buy.**
@@ -10,8 +12,6 @@
 [![Python](https://img.shields.io/badge/python-3.12-3776AB?logo=python&logoColor=white)](requirements.txt)
 [![Runs on](https://img.shields.io/badge/runs%20on-GitHub%20Actions%20%2B%20Cloudflare-F38020?logo=cloudflare&logoColor=white)](#how-it-runs)
 [![Cost](https://img.shields.io/badge/cost-%E2%82%AC0-success)](docs/adr/0002-public-repo-with-encrypted-state.md)
-
-<img src="docs/images/review.png" alt="The form inside Telegram: Milano (all) to Roma Termini, round trip, outbound 11 to 13 December in the morning, return 14 December in the evening, cheapest fare, maximum 60 euros, with the review sheet open" width="340">
 
 </div>
 
@@ -55,6 +55,14 @@ Buying a high-speed ticket in Italy at a good price means watching for it:
 | **Fares with a deadline** | FrecciaYOUNG, FrecciaSENIOR and Italo's youth and senior fares stop selling 11 days before departure, the same-day return fare 3 days before |
 
 ## Features
+
+<div align="center">
+
+<img src="docs/images/review.png" alt="The form inside Telegram: Milano (all) to Roma Termini, round trip, outbound 11 to 13 December in the morning, return 14 December in the evening, cheapest fare, maximum 60 euros, with the review sheet open" width="340">
+
+<i>The form inside Telegram, with the review sheet open.</i>
+
+</div>
 
 - **A form, not a command syntax.** The 🚄 button next to the message box opens
   the form shown above: route, one day, a month or a custom period of up to 92
